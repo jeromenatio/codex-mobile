@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Codex Mobile</title>
+    <link rel="stylesheet" href="/assets/bootstrap-icons/font/bootstrap-icons.css" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="topbar-copy">
+          <p class="eyebrow">Codex Mobile</p>
+          <h1 id="activeWorkspace"></h1>
+        </div>
+        <div class="topbar-actions">
+          <button id="openConfigModal" class="icon-button plain-button" type="button" aria-label="Configuration">
+            <i class="bi bi-gear-fill icon-glyph" aria-hidden="true"></i>
+          </button>
+          <button id="openCreateModal" class="icon-button plain-button" type="button" aria-label="Créer une session">
+            <i class="bi bi-plus-lg icon-glyph" aria-hidden="true"></i>
+          </button>
+          <button id="toggleSidebar" class="icon-button plain-button" type="button" aria-label="Ouvrir les sessions">
+            <i class="bi bi-chat-left-text-fill icon-glyph" aria-hidden="true"></i>
+          </button>
+        </div>
+      </header>
+
+      <aside id="sidebar" class="sidebar">
+        <section class="card session-list-card">
+          <div class="section-title sidebar-title">
+            <h2>Sessions</h2>
+            <button id="closeSidebar" class="icon-button plain-button mobile-only" type="button" aria-label="Fermer le panneau">
+              <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
+            </button>
+          </div>
+          <span id="workspaceCount" class="pill">0 workspace</span>
+          <p id="sessionCount" class="sidebar-meta">0 session</p>
+          <div id="sessionList" class="session-list"></div>
+        </section>
+      </aside>
+
+      <main class="chat-shell">
+        <section id="messages" class="messages"></section>
+      </main>
+
+      <section class="composer-wrap">
+        <form id="messageForm" class="composer">
+          <textarea id="messageInput" rows="1" placeholder="Écrire à Codex"></textarea>
+          <div class="composer-footer">
+            <div id="composerStatus" class="composer-status">Aucune session</div>
+            <div class="composer-actions">
+              <input id="imageInput" type="file" accept="image/*" multiple hidden />
+              <button id="pickImagesButton" class="plain-button icon-button action-button" type="button" aria-label="Ajouter des images">
+                <i class="bi bi-image-fill icon-glyph" aria-hidden="true"></i>
+              </button>
+              <button id="clearComposerButton" class="plain-button icon-button action-button" type="button" aria-label="Vider le message">
+                <i class="bi bi-eraser-fill icon-glyph" aria-hidden="true"></i>
+              </button>
+              <button id="sendButton" class="primary-button send-button" type="submit" aria-label="Envoyer">
+                <i class="bi bi-send-fill send-icon" aria-hidden="true"></i>
+              </button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <section id="notifications" class="notifications" aria-live="polite" aria-atomic="true"></section>
+
+      <section id="createModal" class="modal-layer" aria-hidden="true">
+        <div id="modalBackdrop" class="modal-backdrop"></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="createModalTitle">
+          <div class="section-title">
+            <h2 id="createModalTitle">Nouvelle session</h2>
+            <button id="closeCreateModal" class="icon-button plain-button" type="button" aria-label="Fermer">
+              <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
+            </button>
+          </div>
+          <form id="createSessionForm" class="stack">
+            <label class="field">
+              <span>Workspace</span>
+              <input id="workspaceInput" name="workspace" type="text" placeholder="ex: mon-projet" required />
+            </label>
+            <label class="field">
+              <span>Premier message</span>
+              <textarea id="promptInput" name="prompt" rows="4" placeholder="Décris la tâche à lancer."></textarea>
+            </label>
+            <div class="modal-actions">
+              <button id="cancelCreateModal" class="ghost-button" type="button">Annuler</button>
+              <button class="primary-button" type="submit">Créer la session</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section id="configModal" class="modal-layer" aria-hidden="true">
+        <div id="configBackdrop" class="modal-backdrop"></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="configModalTitle">
+          <div class="section-title">
+            <h2 id="configModalTitle">Configuration</h2>
+            <button id="closeConfigModal" class="icon-button plain-button" type="button" aria-label="Fermer">
+              <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
+            </button>
+          </div>
+          <form id="configForm" class="stack">
+            <label class="field">
+              <span>Durée des notifications en secondes</span>
+              <input id="notificationDurationInput" name="notificationDuration" type="number" min="1" max="30" step="1" />
+            </label>
+            <div class="modal-actions">
+              <button id="cancelConfigModal" class="ghost-button" type="button">Annuler</button>
+              <button class="primary-button" type="submit">Enregistrer</button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+  </html>
