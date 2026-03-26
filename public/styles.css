@@ -10,6 +10,7 @@
   --user: #1d1814;
   --assistant: #fffaf4;
   --header-h: 64px;
+  --sessionbar-h: 42px;
   --composer-h: 112px;
   --shadow: 0 24px 48px rgba(74, 36, 12, 0.14);
   --radius: 24px;
@@ -78,9 +79,52 @@ textarea {
   line-height: 1;
 }
 
+.session-bar {
+  position: fixed;
+  top: var(--header-h);
+  left: 0;
+  right: 0;
+  z-index: 39;
+  min-height: var(--sessionbar-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  background: rgba(247, 238, 227, 0.9);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.42);
+  backdrop-filter: blur(16px);
+}
+
+.session-bar-workspace,
+.session-bar-session {
+  min-width: 0;
+  font-size: 0.86rem;
+  line-height: 1.1;
+}
+
+.session-bar-workspace {
+  margin-left: auto;
+  flex: 0 0 auto;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-bar-session {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  color: var(--ink);
+  font-weight: 700;
+}
+
 .icon-button {
-  width: 40px;
-  height: 40px;
+  width: 34px;
+  height: 34px;
   font-size: 1rem;
   border-radius: 999px;
   box-shadow: none;
@@ -142,6 +186,7 @@ textarea {
   padding: calc(env(safe-area-inset-top, 0px) + 16px) 0 16px 0;
   align-content: stretch;
   overflow: hidden;
+  overflow-x: hidden;
   transform: translateX(108%);
   opacity: 0;
   pointer-events: none;
@@ -166,6 +211,7 @@ textarea {
 .card {
   padding: 18px;
   overflow: auto;
+  overflow-x: hidden;
 }
 
 .section-title,
@@ -181,14 +227,27 @@ textarea {
   font-size: 1rem;
 }
 
+.sidebar-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sidebar-heading i {
+  font-size: 1rem;
+  color: var(--ink-soft);
+}
+
 .sidebar-title {
   align-items: flex-start;
 }
 
-.sidebar-meta {
-  margin: 14px 0 0;
-  color: var(--ink-soft);
-  font-size: 0.86rem;
+.sidebar-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  flex-wrap: nowrap;
 }
 
 .stack,
@@ -238,16 +297,21 @@ textarea {
 
 .session-list {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   margin-top: 14px;
+  overflow-x: hidden;
 }
 
 .session-item {
   width: 100%;
-  padding: 12px;
+  min-height: 72px;
+  padding: 10px 10px 10px 14px;
   background: rgba(255, 255, 255, 0.62);
   border: 1px solid transparent;
-  border-radius: 20px;
+  border-radius: 18px;
+  display: grid;
+  gap: 8px;
+  overflow: hidden;
 }
 
 .session-item.active {
@@ -255,36 +319,61 @@ textarea {
   border-color: rgba(191, 90, 42, 0.34);
 }
 
+.session-head,
+.session-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
 .session-main {
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 0;
   border: 0;
   background: transparent;
   text-align: left;
   cursor: pointer;
+  color: var(--ink);
+}
+
+.session-name {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+  color: var(--ink);
 }
 
 .session-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
-  margin-top: 12px;
+  margin-left: auto;
+  flex: 0 0 auto;
 }
 
 .session-action {
-  padding: 9px 12px;
-  border-radius: 999px;
+  flex: 0 0 auto;
 }
 
-.session-subline {
-  display: block;
-  margin-top: 6px;
-  font-size: 0.84rem;
-  color: var(--ink-soft);
+.session-meta {
+  justify-content: space-between;
+}
+
+.workspace-badge {
+  max-width: 52%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-shell {
   position: fixed;
-  top: calc(var(--header-h) + 8px);
+  top: calc(var(--header-h) + var(--sessionbar-h) + 8px);
   left: 0;
   right: 0;
   bottom: calc(var(--composer-h) + 8px);
@@ -448,8 +537,8 @@ textarea {
 }
 
 .action-button {
-  width: 40px;
-  height: 40px;
+  width: 34px;
+  height: 34px;
   padding: 0;
   border-radius: 999px;
   flex: 0 0 auto;
@@ -464,8 +553,8 @@ textarea {
 }
 
 .send-button {
-  height: 40px;
-  width: 40px;
+  height: 34px;
+  width: 34px;
   padding: 0;
   border-radius: 999px;
 }
@@ -478,6 +567,10 @@ textarea {
 .action-button .icon-glyph,
 .send-button .send-icon {
   font-size: 1.18rem;
+}
+
+.session-action .icon-glyph {
+  font-size: 1.02rem;
 }
 
 .notifications {
@@ -582,6 +675,16 @@ textarea {
   padding: 18px;
 }
 
+.modal-card-sm {
+  max-width: 420px;
+}
+
+.modal-copy {
+  margin: 10px 0 0;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;
@@ -595,6 +698,7 @@ textarea {
 @media (min-width: 900px) {
   :root {
     --header-h: 68px;
+    --sessionbar-h: 44px;
     --composer-h: 112px;
   }
 
@@ -628,6 +732,10 @@ textarea {
     right: auto;
     width: min(520px, calc(100vw - 32px));
     transform: translate(-50%, -50%);
+  }
+
+  .modal-card-sm {
+    width: min(420px, calc(100vw - 32px));
   }
 
   #toggleSidebar {

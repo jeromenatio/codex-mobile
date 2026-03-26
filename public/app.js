@@ -16,16 +16,32 @@ const state = {
   settings: loadSettings(),
   notificationTimers: new Map(),
   pendingAttachments: [],
+  pendingRenameSessionId: null,
+  pendingDeleteSessionId: null,
 };
 
 const elements = {
   openConfigModal: document.getElementById("openConfigModal"),
+  scrollTopButton: document.getElementById("scrollTopButton"),
+  scrollBottomButton: document.getElementById("scrollBottomButton"),
   closeConfigModal: document.getElementById("closeConfigModal"),
   cancelConfigModal: document.getElementById("cancelConfigModal"),
   configModal: document.getElementById("configModal"),
   configBackdrop: document.getElementById("configBackdrop"),
   configForm: document.getElementById("configForm"),
   notificationDurationInput: document.getElementById("notificationDurationInput"),
+  renameModal: document.getElementById("renameModal"),
+  renameBackdrop: document.getElementById("renameBackdrop"),
+  closeRenameModal: document.getElementById("closeRenameModal"),
+  cancelRenameModal: document.getElementById("cancelRenameModal"),
+  renameSessionForm: document.getElementById("renameSessionForm"),
+  renameSessionInput: document.getElementById("renameSessionInput"),
+  deleteModal: document.getElementById("deleteModal"),
+  deleteBackdrop: document.getElementById("deleteBackdrop"),
+  closeDeleteModal: document.getElementById("closeDeleteModal"),
+  cancelDeleteModal: document.getElementById("cancelDeleteModal"),
+  confirmDeleteButton: document.getElementById("confirmDeleteButton"),
+  deleteModalText: document.getElementById("deleteModalText"),
   openCreateModal: document.getElementById("openCreateModal"),
   closeCreateModal: document.getElementById("closeCreateModal"),
   cancelCreateModal: document.getElementById("cancelCreateModal"),
@@ -41,6 +57,7 @@ const elements = {
   sessionCount: document.getElementById("sessionCount"),
   workspaceCount: document.getElementById("workspaceCount"),
   activeWorkspace: document.getElementById("activeWorkspace"),
+  activeSessionName: document.getElementById("activeSessionName"),
   composerStatus: document.getElementById("composerStatus"),
   messageForm: document.getElementById("messageForm"),
   messageInput: document.getElementById("messageInput"),
@@ -68,10 +85,20 @@ async function bootstrap() {
 
 function bindEvents() {
   elements.openConfigModal.addEventListener("click", openConfigModal);
+  elements.scrollTopButton.addEventListener("click", scrollConversationTop);
+  elements.scrollBottomButton.addEventListener("click", scrollConversationBottom);
   elements.closeConfigModal.addEventListener("click", closeConfigModal);
   elements.cancelConfigModal.addEventListener("click", closeConfigModal);
   elements.configBackdrop.addEventListener("click", closeConfigModal);
   elements.configForm.addEventListener("submit", onSaveConfig);
+  elements.closeRenameModal.addEventListener("click", closeRenameModal);
+  elements.cancelRenameModal.addEventListener("click", closeRenameModal);
+  elements.renameBackdrop.addEventListener("click", closeRenameModal);
+  elements.renameSessionForm.addEventListener("submit", onRenameSession);
+  elements.closeDeleteModal.addEventListener("click", closeDeleteModal);
+  elements.cancelDeleteModal.addEventListener("click", closeDeleteModal);
+  elements.deleteBackdrop.addEventListener("click", closeDeleteModal);
+  elements.confirmDeleteButton.addEventListener("click", onDeleteSession);
   elements.openCreateModal.addEventListener("click", openCreateModal);
   elements.closeCreateModal.addEventListener("click", closeCreateModal);
   elements.cancelCreateModal.addEventListener("click", closeCreateModal);
@@ -94,6 +121,8 @@ function bindEvents() {
     if (event.key === "Escape") {
       closeCreateModal();
       closeConfigModal();
+      closeRenameModal();
+      closeDeleteModal();
       closeSidebar();
     }
   });
@@ -120,18 +149,31 @@ function renderSessionList() {
   elements.sessionList.innerHTML = sessions
     .map((session) => {
       const active = session.id === state.activeSessionId ? "active" : "";
+      const statusLabel = session.status === "running" ? "En cours" : session.status;
       return `
         <article class="session-item ${active}" data-session-id="${session.id}">
-          <button class="session-main" type="button" data-action="open" data-session-id="${session.id}">
-            <span class="session-row">
-              <strong>${escapeHtml(session.name)}</strong>
-              <span class="mini-badge ${session.status === "running" ? "live" : "muted"}">${escapeHtml(session.status)}</span>
-            </span>
-            <span class="session-subline">${escapeHtml(session.workspaceName)} · ${escapeHtml(formatDate(session.updatedAt))}</span>
-          </button>
-          <div class="session-actions">
-            <button class="session-action ghost-button" type="button" data-action="rename" data-session-id="${session.id}">Renommer</button>
-            <button class="session-action ghost-button" type="button" data-action="delete" data-session-id="${session.id}">Supprimer</button>
+          <div class="session-head">
+            <button
+              class="session-main"
+              type="button"
+              data-action="open"
+              data-session-id="${session.id}"
+              title="${escapeHtml(session.name)}"
+            >
+              <span class="session-name">${escapeHtml(session.name)}</span>
+            </button>
+            <div class="session-actions">
+              <button class="session-action icon-button plain-button" type="button" data-action="rename" data-session-id="${session.id}" aria-label="Renommer ${escapeHtml(session.name)}">
+                <i class="bi bi-pencil-fill icon-glyph" aria-hidden="true"></i>
+              </button>
+              <button class="session-action icon-button plain-button" type="button" data-action="delete" data-session-id="${session.id}" aria-label="Supprimer ${escapeHtml(session.name)}">
+                <i class="bi bi-trash3-fill icon-glyph" aria-hidden="true"></i>
+              </button>
+            </div>
+          </div>
+          <div class="session-meta">
+            <span class="mini-badge ${session.status === "running" ? "live" : "muted"}">${escapeHtml(statusLabel)}</span>
+            <span class="mini-badge workspace-badge" title="${escapeHtml(session.workspaceName)}">${escapeHtml(session.workspaceName)}</span>
           </div>
         </article>
       `;
@@ -146,75 +188,25 @@ function renderSessionList() {
   }
 
   for (const button of elements.sessionList.querySelectorAll("[data-action='rename']")) {
-    button.addEventListener("click", async () => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
       const session = state.bootstrap.sessions.find((item) => item.id === button.dataset.sessionId);
       if (!session) {
         return;
       }
-
-      const nextName = window.prompt("Nouveau nom de session", session.name || session.workspaceName);
-      if (!nextName || !nextName.trim()) {
-        return;
-      }
-
-      const response = await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: nextName.trim() }),
-      });
-
-      if (!response.ok) {
-        return;
-      }
-
-      const payload = await response.json();
-      state.bootstrap = payload.bootstrap;
-      renderSessionList();
-
-      if (state.activeSessionId === session.id) {
-        updateHeader(payload.session);
-      }
+      openRenameModal(session);
     });
   }
 
   for (const button of elements.sessionList.querySelectorAll("[data-action='delete']")) {
-    button.addEventListener("click", async () => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
       const sessionId = button.dataset.sessionId;
       const session = state.bootstrap.sessions.find((item) => item.id === sessionId);
       if (!session) {
         return;
       }
-
-      const confirmed = window.confirm(`Supprimer la session "${session.name || session.workspaceName}" ?`);
-      if (!confirmed) {
-        return;
-      }
-
-      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
-        method: "DELETE",
-      });
-
-      if (!response.ok) {
-        return;
-      }
-
-      const payload = await response.json();
-
-      if (state.activeSessionId === sessionId) {
-        disconnectSocket();
-        state.activeSessionId = null;
-        state.messages = [];
-      }
-
-      state.bootstrap = payload.bootstrap;
-      const nextSessionId = pickSessionId();
-      if (nextSessionId) {
-        await activateSession(nextSessionId);
-      } else {
-        updateHeader(null);
-        renderSessionList();
-        renderMessages();
-      }
+      openDeleteModal(session);
     });
   }
 }
@@ -386,7 +378,8 @@ function upsertMessage(message) {
 }
 
 function updateHeader(session) {
-  elements.activeWorkspace.textContent = session ? session.name || session.workspaceName : "";
+  elements.activeWorkspace.textContent = session ? session.workspaceName || "" : "";
+  elements.activeSessionName.textContent = session ? session.name || session.workspaceName || "" : "";
   const status = session?.status || "idle";
   elements.messageInput.disabled = status === "running";
   elements.pickImagesButton.disabled = status === "running";
@@ -435,6 +428,8 @@ function autoResizeMessageInput() {
 function openCreateModal() {
   closeSidebar();
   closeConfigModal();
+  closeRenameModal();
+  closeDeleteModal();
   elements.createModal.classList.add("open");
   elements.createModal.setAttribute("aria-hidden", "false");
   window.setTimeout(() => {
@@ -450,6 +445,8 @@ function closeCreateModal() {
 function openConfigModal() {
   closeSidebar();
   closeCreateModal();
+  closeRenameModal();
+  closeDeleteModal();
   elements.notificationDurationInput.value = String(state.settings.notificationDurationSeconds);
   elements.configModal.classList.add("open");
   elements.configModal.setAttribute("aria-hidden", "false");
@@ -460,12 +457,129 @@ function closeConfigModal() {
   elements.configModal.setAttribute("aria-hidden", "true");
 }
 
+function openRenameModal(session) {
+  closeSidebar();
+  closeCreateModal();
+  closeConfigModal();
+  closeDeleteModal();
+  state.pendingRenameSessionId = session.id;
+  elements.renameSessionInput.value = session.name || session.workspaceName || "";
+  elements.renameModal.classList.add("open");
+  elements.renameModal.setAttribute("aria-hidden", "false");
+  window.setTimeout(() => {
+    elements.renameSessionInput.focus();
+    elements.renameSessionInput.select();
+  }, 0);
+}
+
+function closeRenameModal() {
+  state.pendingRenameSessionId = null;
+  elements.renameModal.classList.remove("open");
+  elements.renameModal.setAttribute("aria-hidden", "true");
+}
+
+function openDeleteModal(session) {
+  closeSidebar();
+  closeCreateModal();
+  closeConfigModal();
+  closeRenameModal();
+  state.pendingDeleteSessionId = session.id;
+  elements.deleteModalText.textContent = `Supprimer la session "${session.name || session.workspaceName}" ?`;
+  elements.deleteModal.classList.add("open");
+  elements.deleteModal.setAttribute("aria-hidden", "false");
+}
+
+function closeDeleteModal() {
+  state.pendingDeleteSessionId = null;
+  elements.deleteModal.classList.remove("open");
+  elements.deleteModal.setAttribute("aria-hidden", "true");
+}
+
 function toggleSidebar() {
   elements.sidebar.classList.toggle("open");
 }
 
 function closeSidebar() {
   elements.sidebar.classList.remove("open");
+}
+
+function scrollConversationTop() {
+  elements.messages.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function scrollConversationBottom() {
+  elements.messages.scrollTo({ top: elements.messages.scrollHeight, behavior: "smooth" });
+}
+
+async function onRenameSession(event) {
+  event.preventDefault();
+  if (!state.pendingRenameSessionId) {
+    return;
+  }
+
+  const nextName = elements.renameSessionInput.value.trim();
+  if (!nextName) {
+    return;
+  }
+
+  const response = await fetch(`/api/sessions/${encodeURIComponent(state.pendingRenameSessionId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: nextName }),
+  });
+
+  if (!response.ok) {
+    notify("error", "Renommage impossible.");
+    return;
+  }
+
+  const payload = await response.json();
+  state.bootstrap = payload.bootstrap;
+  closeRenameModal();
+  renderSessionList();
+
+  if (state.activeSessionId === payload.session.id) {
+    updateHeader(payload.session);
+  }
+
+  notify("success", "Nom de session mis a jour.");
+}
+
+async function onDeleteSession() {
+  const sessionId = state.pendingDeleteSessionId;
+  if (!sessionId) {
+    return;
+  }
+
+  const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    notify("error", "Suppression impossible.");
+    return;
+  }
+
+  const payload = await response.json();
+  closeDeleteModal();
+
+  if (state.activeSessionId === sessionId) {
+    disconnectSocket();
+    state.activeSessionId = null;
+    state.messages = [];
+  }
+
+  state.bootstrap = payload.bootstrap;
+  const nextSessionId = pickSessionId();
+  if (nextSessionId) {
+    await activateSession(nextSessionId);
+  } else {
+    updateHeader(null);
+    renderSessionList();
+    renderMessages();
+  }
+
+  notify("success", "Session supprimee.");
 }
 
 function shortId(value) {
