@@ -126,43 +126,44 @@
           </div>
           <form id="configForm" class="stack modal-form">
             <div class="modal-body">
-              <label class="field">
-                <span>Durée des notifications en secondes</span>
-                <input id="notificationDurationInput" name="notificationDuration" type="number" min="1" max="30" step="1" />
+              <section class="settings-group">
+                <h3>Application</h3>
+              <label class="setting-row">
+                <span class="switch-copy">
+                  <strong>Durée des notifications</strong>
+                </span>
+                <input id="notificationDurationInput" class="setting-input" name="notificationDuration" type="number" min="1" max="30" step="1" />
               </label>
+              </section>
               <section class="settings-group">
                 <h3>Accès Codex</h3>
-                <label class="switch-row">
-                  <span class="switch-copy">
-                    <strong>Sandbox full access</strong>
-                    <small>Ajoute `sandbox_mode = "danger-full-access"`.</small>
-                  </span>
-                  <input id="sandboxDangerInput" type="checkbox" />
-                  <span class="switch-ui" aria-hidden="true"></span>
-                </label>
-                <label class="switch-row">
-                  <span class="switch-copy">
-                    <strong>Approval never</strong>
-                    <small>Ajoute `approval_policy = "never"`.</small>
-                  </span>
-                  <input id="approvalNeverInput" type="checkbox" />
-                  <span class="switch-ui" aria-hidden="true"></span>
-                </label>
-                <label class="switch-row">
-                  <span class="switch-copy">
-                    <strong>Masquer l’avertissement</strong>
-                    <small>Ajoute `hide_full_access_warning = true`.</small>
-                  </span>
-                  <input id="hideFullAccessWarningInput" type="checkbox" />
-                  <span class="switch-ui" aria-hidden="true"></span>
-                </label>
-                <label class="switch-row">
-                  <span class="switch-copy">
-                    <strong>Recherche web live</strong>
-                    <small>Ajoute `search = true` et active `--search` au lancement de Codex.</small>
-                  </span>
-                  <input id="searchInput" type="checkbox" />
-                  <span class="switch-ui" aria-hidden="true"></span>
+              <label class="switch-row">
+                <span class="switch-copy">
+                  <strong>Sandbox full access</strong>
+                </span>
+                <input id="sandboxDangerInput" type="checkbox" />
+                <span class="switch-ui" aria-hidden="true"></span>
+              </label>
+              <label class="switch-row">
+                <span class="switch-copy">
+                  <strong>Approval never</strong>
+                </span>
+                <input id="approvalNeverInput" type="checkbox" />
+                <span class="switch-ui" aria-hidden="true"></span>
+              </label>
+              <label class="switch-row">
+                <span class="switch-copy">
+                  <strong>Masquer l’avertissement</strong>
+                </span>
+                <input id="hideFullAccessWarningInput" type="checkbox" />
+                <span class="switch-ui" aria-hidden="true"></span>
+              </label>
+              <label class="switch-row">
+                <span class="switch-copy">
+                  <strong>Recherche web live</strong>
+                </span>
+                <input id="searchInput" type="checkbox" />
+                <span class="switch-ui" aria-hidden="true"></span>
                 </label>
               </section>
             </div>
