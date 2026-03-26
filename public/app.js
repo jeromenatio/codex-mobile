@@ -450,11 +450,13 @@ function renderMessages(shouldScroll = false) {
   elements.messages.innerHTML = state.messages
     .map((message) => {
       const pending = message.pending ? "pending" : "";
-      const body = escapeHtml(message.text || (message.pending ? "Codex réfléchit..." : ""));
+      const body = escapeHtml(message.text || (message.pending ? "Codex réfléchit" : ""));
       return `
         <article class="bubble ${message.role} ${pending}">
           <div class="bubble-meta">${message.role === "user" ? "Vous" : "Codex"} · ${escapeHtml(formatDate(message.createdAt))}</div>
-          <div class="bubble-body markdown-body">${renderMarkdown(body)}</div>
+          <div class="bubble-body markdown-body">${renderMarkdown(body)}${
+            message.pending ? '<span class="typing-dots" aria-hidden="true"><span></span><span></span><span></span></span>' : ""
+          }</div>
         </article>
       `;
     })
@@ -483,7 +485,7 @@ function updateHeader(session) {
   elements.pickImagesButton.disabled = status === "running";
   elements.clearComposerButton.disabled = status === "running";
   elements.sendButton.disabled = status === "running";
-  elements.composerStatus.textContent = buildComposerStatus(session);
+  renderComposerStatus(session);
   elements.composerStatus.className = `composer-status badge-status ${status === "idle" ? "idle" : "live"}`;
 }
 
@@ -926,9 +928,7 @@ async function onPickImages(event) {
   state.pendingAttachments.push(...images);
   elements.imageInput.value = "";
   renderImageManager();
-  elements.composerStatus.textContent = buildComposerStatus(
-    state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null
-  );
+  renderComposerStatus(state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null);
   notify("success", `${images.length} image${images.length > 1 ? "s" : ""} ajoutée${images.length > 1 ? "s" : ""}.`);
 }
 
@@ -939,9 +939,7 @@ function clearComposer() {
   state.pendingAttachments = [];
   renderImageManager();
   autoResizeMessageInput();
-  elements.composerStatus.textContent = buildComposerStatus(
-    state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null
-  );
+  renderComposerStatus(state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null);
 }
 
 function clearPendingImages() {
@@ -949,17 +947,13 @@ function clearPendingImages() {
   state.pendingAttachments = [];
   elements.imageInput.value = "";
   renderImageManager();
-  elements.composerStatus.textContent = buildComposerStatus(
-    state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null
-  );
+  renderComposerStatus(state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null);
 }
 
 function removePendingImage(imageId) {
   state.pendingAttachments = state.pendingAttachments.filter((image) => image.id !== imageId);
   renderImageManager();
-  elements.composerStatus.textContent = buildComposerStatus(
-    state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null
-  );
+  renderComposerStatus(state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null);
 }
 
 function buildComposerStatus(session) {
@@ -969,6 +963,13 @@ function buildComposerStatus(session) {
     return base;
   }
   return `${base} · ${state.pendingAttachments.length} image${state.pendingAttachments.length > 1 ? "s" : ""}`;
+}
+
+function renderComposerStatus(session) {
+  const status = session?.status || "idle";
+  const label = escapeHtml(buildComposerStatus(session));
+  const loading = status === "running" ? '<span class="loading-inline loading-inline-sm" aria-hidden="true"></span>' : "";
+  elements.composerStatus.innerHTML = `${loading}<span>${label}</span>`;
 }
 
 function readFileAsDataUrl(file) {
