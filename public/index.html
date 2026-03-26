@@ -238,7 +238,26 @@
             </button>
           </div>
           <div class="modal-body prompt-modal-body">
-            <form id="promptForm" class="stack prompt-form">
+            <div id="promptList" class="prompt-list"></div>
+          </div>
+          <div class="modal-actions modal-footer">
+            <button id="openPromptEditorButton" class="ghost-button" type="button">+ Nouveau</button>
+            <button id="closePromptFooterButton" class="ghost-button" type="button">Fermer</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="promptEditorModal" class="modal-layer stacked-modal" aria-hidden="true">
+        <div id="promptEditorBackdrop" class="modal-backdrop"></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="promptEditorModalTitle">
+          <div class="modal-header section-title">
+            <h2 id="promptEditorModalTitle">Nouveau prompt</h2>
+            <button id="closePromptEditorModal" class="icon-button plain-button" type="button" aria-label="Fermer">
+              <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
+            </button>
+          </div>
+          <form id="promptForm" class="stack modal-form">
+            <div class="modal-body">
               <label class="field">
                 <span>Nom</span>
                 <input id="promptNameInput" name="name" type="text" placeholder="Ex: commit + push" required />
@@ -247,16 +266,12 @@
                 <span>Prompt</span>
                 <textarea id="promptTextInput" name="text" rows="4" placeholder="Texte du prompt rapide" required></textarea>
               </label>
-              <div class="prompt-form-actions">
-                <button id="resetPromptFormButton" class="ghost-button" type="button">Nouveau</button>
-                <button id="savePromptButton" class="primary-button" type="submit">Enregistrer</button>
-              </div>
-            </form>
-            <div id="promptList" class="prompt-list"></div>
-          </div>
-          <div class="modal-actions modal-footer">
-            <button id="closePromptFooterButton" class="ghost-button" type="button">Fermer</button>
-          </div>
+            </div>
+            <div class="modal-actions modal-footer">
+              <button id="cancelPromptEditorButton" class="ghost-button" type="button">Annuler</button>
+              <button id="savePromptButton" class="primary-button" type="submit">Enregistrer</button>
+            </div>
+          </form>
         </div>
       </section>
 

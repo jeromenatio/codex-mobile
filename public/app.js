@@ -54,6 +54,12 @@ const elements = {
   promptBackdrop: document.getElementById("promptBackdrop"),
   closePromptModal: document.getElementById("closePromptModal"),
   closePromptFooterButton: document.getElementById("closePromptFooterButton"),
+  openPromptEditorButton: document.getElementById("openPromptEditorButton"),
+  promptEditorModal: document.getElementById("promptEditorModal"),
+  promptEditorBackdrop: document.getElementById("promptEditorBackdrop"),
+  closePromptEditorModal: document.getElementById("closePromptEditorModal"),
+  cancelPromptEditorButton: document.getElementById("cancelPromptEditorButton"),
+  promptEditorModalTitle: document.getElementById("promptEditorModalTitle"),
   promptForm: document.getElementById("promptForm"),
   promptNameInput: document.getElementById("promptNameInput"),
   promptTextInput: document.getElementById("promptTextInput"),
@@ -142,9 +148,12 @@ function bindEvents() {
   elements.openPromptModal.addEventListener("click", openPromptModal);
   elements.closePromptModal.addEventListener("click", closePromptModal);
   elements.closePromptFooterButton.addEventListener("click", closePromptModal);
+  elements.openPromptEditorButton.addEventListener("click", openCreatePromptEditor);
   elements.promptBackdrop.addEventListener("click", closePromptModal);
+  elements.closePromptEditorModal.addEventListener("click", closePromptEditorModal);
+  elements.cancelPromptEditorButton.addEventListener("click", closePromptEditorModal);
+  elements.promptEditorBackdrop.addEventListener("click", closePromptEditorModal);
   elements.promptForm.addEventListener("submit", onSavePrompt);
-  elements.resetPromptFormButton.addEventListener("click", resetPromptForm);
   elements.closeImageModal.addEventListener("click", closeImageModal);
   elements.doneImageModalButton.addEventListener("click", closeImageModal);
   elements.addMoreImagesButton.addEventListener("click", () => elements.imageInput.click());
@@ -194,6 +203,7 @@ function bindEvents() {
       closeCreateModal();
       closeConfigModal();
       closePromptModal();
+      closePromptEditorModal();
       closeImageModal();
       closeModelModal();
       closeConfirmModelModal();
@@ -633,17 +643,33 @@ function openPromptModal() {
   closeRenameModal();
   closeDeleteModal();
   renderPromptList();
-  resetPromptForm();
   elements.promptModal.classList.add("open");
   elements.promptModal.setAttribute("aria-hidden", "false");
+}
+
+function closePromptModal() {
+  closePromptEditorModal();
+  elements.promptModal.classList.remove("open");
+  elements.promptModal.setAttribute("aria-hidden", "true");
+}
+
+function openCreatePromptEditor() {
+  resetPromptForm();
+  elements.promptEditorModalTitle.textContent = "Nouveau prompt";
+  openPromptEditorModal();
+}
+
+function openPromptEditorModal() {
+  elements.promptEditorModal.classList.add("open");
+  elements.promptEditorModal.setAttribute("aria-hidden", "false");
   window.setTimeout(() => {
     elements.promptNameInput.focus();
   }, 0);
 }
 
-function closePromptModal() {
-  elements.promptModal.classList.remove("open");
-  elements.promptModal.setAttribute("aria-hidden", "true");
+function closePromptEditorModal() {
+  elements.promptEditorModal.classList.remove("open");
+  elements.promptEditorModal.setAttribute("aria-hidden", "true");
 }
 
 function closeModelModal() {
@@ -724,6 +750,7 @@ function renderPromptList() {
 function resetPromptForm() {
   state.editingPromptId = null;
   elements.promptForm.reset();
+  elements.promptEditorModalTitle.textContent = "Nouveau prompt";
   elements.savePromptButton.textContent = "Enregistrer";
 }
 
@@ -736,8 +763,9 @@ function startEditPrompt(promptId) {
   state.editingPromptId = promptId;
   elements.promptNameInput.value = prompt.name || "";
   elements.promptTextInput.value = prompt.text || "";
+  elements.promptEditorModalTitle.textContent = "Modifier le prompt";
   elements.savePromptButton.textContent = "Mettre à jour";
-  elements.promptNameInput.focus();
+  openPromptEditorModal();
 }
 
 function usePrompt(promptId) {
@@ -792,6 +820,7 @@ function onSavePrompt(event) {
   persistSettings();
   renderPromptList();
   resetPromptForm();
+  closePromptEditorModal();
 }
 
 function renderImageManager() {

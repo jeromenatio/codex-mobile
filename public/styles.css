@@ -1017,24 +1017,16 @@ textarea {
 }
 
 .prompt-modal-body {
-  display: grid;
-  gap: 14px;
-}
-
-.prompt-form {
-  gap: 12px;
-  padding-bottom: 2px;
-}
-
-.prompt-form-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
+  display: block;
 }
 
 .prompt-list {
   display: grid;
   gap: 10px;
+}
+
+.stacked-modal {
+  z-index: 70;
 }
 
 .prompt-item {
