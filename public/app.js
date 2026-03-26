@@ -2,6 +2,7 @@ import { marked } from "/assets/marked/marked.esm.js";
 
 const storageKey = "codex-mobile:last-session";
 const settingsKey = "codex-mobile:settings";
+const themes = ["sandstone", "ivory-forest", "ocean-paper", "ember-night", "rose-studio"];
 
 marked.setOptions({
   breaks: true,
@@ -40,6 +41,7 @@ const elements = {
   configModal: document.getElementById("configModal"),
   configBackdrop: document.getElementById("configBackdrop"),
   configForm: document.getElementById("configForm"),
+  themeSelect: document.getElementById("themeSelect"),
   notificationDurationInput: document.getElementById("notificationDurationInput"),
   sandboxDangerInput: document.getElementById("sandboxDangerInput"),
   approvalNeverInput: document.getElementById("approvalNeverInput"),
@@ -98,6 +100,7 @@ bootstrap();
 
 async function bootstrap() {
   bindEvents();
+  applyTheme(state.settings.theme);
   try {
     await refreshCodexConfig();
   } catch (error) {
@@ -536,6 +539,7 @@ async function openConfigModal() {
     notify("error", "Chargement de la configuration impossible.");
     return;
   }
+  elements.themeSelect.value = state.settings.theme;
   elements.notificationDurationInput.value = String(state.settings.notificationDurationSeconds);
   elements.sandboxDangerInput.checked = Boolean(state.codexConfig.sandboxDangerFullAccess);
   elements.approvalNeverInput.checked = Boolean(state.codexConfig.approvalNever);
@@ -881,6 +885,7 @@ function readFileAsDataUrl(file) {
 
 async function onSaveConfig(event) {
   event.preventDefault();
+  const theme = normalizeTheme(elements.themeSelect.value);
   const seconds = clampDuration(elements.notificationDurationInput.value);
   const payload = {
     model: state.codexConfig.model,
@@ -901,9 +906,11 @@ async function onSaveConfig(event) {
     return;
   }
 
+  state.settings.theme = theme;
   state.settings.notificationDurationSeconds = seconds;
   state.codexConfig = await response.json();
   localStorage.setItem(settingsKey, JSON.stringify(state.settings));
+  applyTheme(theme);
   closeConfigModal();
   notify("success", `Configuration enregistree. Notifications a ${seconds}s.`);
 }
@@ -912,10 +919,21 @@ function loadSettings() {
   try {
     const raw = localStorage.getItem(settingsKey);
     const parsed = raw ? JSON.parse(raw) : {};
-    return { notificationDurationSeconds: clampDuration(parsed.notificationDurationSeconds) };
+    return {
+      theme: normalizeTheme(parsed.theme),
+      notificationDurationSeconds: clampDuration(parsed.notificationDurationSeconds),
+    };
   } catch {
-    return { notificationDurationSeconds: 5 };
+    return { theme: "sandstone", notificationDurationSeconds: 5 };
   }
+}
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = normalizeTheme(theme);
+}
+
+function normalizeTheme(theme) {
+  return themes.includes(theme) ? theme : "sandstone";
 }
 
 function clampDuration(value) {
