@@ -47,6 +47,7 @@ async function boot() {
 
   persistedState.sessions = Array.isArray(persistedState.sessions) ? persistedState.sessions : [];
   persistedState.lastSessionId = persistedState.lastSessionId || null;
+  persistedState.hiddenSessionIds = Array.isArray(persistedState.hiddenSessionIds) ? persistedState.hiddenSessionIds : [];
 
   let changed = false;
   for (const session of persistedState.sessions) {
@@ -167,6 +168,14 @@ function registerRoutes() {
       if (runtime?.process) {
         runtime.process.kill("SIGTERM");
       }
+
+      const session = persistedState.sessions[sessionIndex];
+      const hiddenIds = new Set(persistedState.hiddenSessionIds);
+      hiddenIds.add(session.id);
+      if (session.threadId) {
+        hiddenIds.add(session.threadId);
+      }
+      persistedState.hiddenSessionIds = [...hiddenIds];
 
       persistedState.sessions.splice(sessionIndex, 1);
 
@@ -548,12 +557,12 @@ function broadcastToSession(sessionId, message) {
 function loadState() {
   try {
     if (!fs.existsSync(STATE_FILE)) {
-      return { sessions: [], lastSessionId: null };
+      return { sessions: [], lastSessionId: null, hiddenSessionIds: [] };
     }
     return JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
   } catch (error) {
     console.error("Failed to load state:", error);
-    return { sessions: [], lastSessionId: null };
+    return { sessions: [], lastSessionId: null, hiddenSessionIds: [] };
   }
 }
 
@@ -709,7 +718,13 @@ function syncExternalCodexSessions() {
     return;
   }
 
+  const hiddenIds = new Set(persistedState.hiddenSessionIds || []);
+
   for (const thread of threads) {
+    if (hiddenIds.has(thread.threadId)) {
+      continue;
+    }
+
     const existing = persistedState.sessions.find(
       (session) => session.threadId === thread.threadId || session.id === thread.threadId
     );
