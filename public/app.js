@@ -453,6 +453,9 @@ function renderMessages(shouldScroll = false) {
       const body = escapeHtml(message.text || (message.pending ? "Codex réfléchit" : ""));
       return `
         <article class="bubble ${message.role} ${pending}">
+          <button class="bubble-copy" type="button" data-copy-message-id="${escapeHtml(message.id)}" aria-label="Copier le message">
+            <i class="bi bi-copy" aria-hidden="true"></i>
+          </button>
           <div class="bubble-meta">${message.role === "user" ? "Vous" : "Codex"} · ${escapeHtml(formatDate(message.createdAt))}</div>
           <div class="bubble-body markdown-body">${renderMarkdown(body)}${
             message.pending ? '<span class="typing-dots" aria-hidden="true"><span></span><span></span><span></span></span>' : ""
@@ -461,6 +464,12 @@ function renderMessages(shouldScroll = false) {
       `;
     })
     .join("");
+
+  for (const button of elements.messages.querySelectorAll("[data-copy-message-id]")) {
+    button.addEventListener("click", () => {
+      void copyMessageToClipboard(button.dataset.copyMessageId);
+    });
+  }
 
   if (shouldScroll || true) {
     elements.messages.scrollTop = elements.messages.scrollHeight;
@@ -867,6 +876,27 @@ function escapeHtml(value) {
 
 function renderMarkdown(value) {
   return marked.parse(String(value || ""));
+}
+
+async function copyMessageToClipboard(messageId) {
+  const message = state.messages.find((item) => item.id === messageId);
+  if (!message) {
+    notify("error", "Message introuvable.");
+    return;
+  }
+
+  const content = String(message.text || (message.pending ? "Codex réfléchit" : "")).trim();
+  if (!content) {
+    notify("warning", "Rien à copier.");
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(content);
+    notify("success", "Message copié.");
+  } catch (error) {
+    notify("error", "Copie impossible.");
+  }
 }
 
 function notify(type, text) {
