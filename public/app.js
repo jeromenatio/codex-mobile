@@ -30,6 +30,20 @@ const state = {
   pendingDeleteSessionId: null,
   pendingModelSlug: null,
   editingPromptId: null,
+  stt: {
+    transcript: "",
+    interim: "",
+    listening: false,
+    shouldKeepAlive: false,
+    audioDetected: false,
+    recognition: null,
+    stream: null,
+    audioContext: null,
+    analyser: null,
+    source: null,
+    animationFrameId: null,
+    restartTimerId: null,
+  },
 };
 
 const elements = {
@@ -118,6 +132,15 @@ const elements = {
   imageInput: document.getElementById("imageInput"),
   pickImagesButton: document.getElementById("pickImagesButton"),
   clearComposerButton: document.getElementById("clearComposerButton"),
+  openSttModal: document.getElementById("openSttModal"),
+  sttModal: document.getElementById("sttModal"),
+  sttBackdrop: document.getElementById("sttBackdrop"),
+  closeSttModal: document.getElementById("closeSttModal"),
+  cancelSttButton: document.getElementById("cancelSttButton"),
+  insertSttButton: document.getElementById("insertSttButton"),
+  sttStatus: document.getElementById("sttStatus"),
+  sttTranscript: document.getElementById("sttTranscript"),
+  sttLevelMeter: document.getElementById("sttLevelMeter"),
   messages: document.getElementById("messages"),
   sendButton: document.getElementById("sendButton"),
   notifications: document.getElementById("notifications"),
@@ -159,6 +182,21 @@ function bindEvents() {
   elements.addMoreImagesButton.addEventListener("click", () => elements.imageInput.click());
   elements.clearImagesButton.addEventListener("click", clearPendingImages);
   elements.imageBackdrop.addEventListener("click", closeImageModal);
+  elements.openSttModal.addEventListener("click", () => {
+    void openSttModal();
+  });
+  elements.closeSttModal.addEventListener("click", () => {
+    void closeSttModal();
+  });
+  elements.cancelSttButton.addEventListener("click", () => {
+    void closeSttModal();
+  });
+  elements.insertSttButton.addEventListener("click", () => {
+    void insertSttTranscript();
+  });
+  elements.sttBackdrop.addEventListener("click", () => {
+    void closeSttModal();
+  });
   elements.closeModelModal.addEventListener("click", closeModelModal);
   elements.modelBackdrop.addEventListener("click", closeModelModal);
   elements.closeConfirmModelModal.addEventListener("click", closeConfirmModelModal);
@@ -205,6 +243,7 @@ function bindEvents() {
       closePromptModal();
       closePromptEditorModal();
       closeImageModal();
+      void closeSttModal();
       closeModelModal();
       closeConfirmModelModal();
       closeRenameModal();
@@ -522,6 +561,7 @@ function updateHeader(session) {
   elements.messageInput.disabled = status === "running";
   elements.pickImagesButton.disabled = status === "running";
   elements.clearComposerButton.disabled = status === "running";
+  elements.openSttModal.disabled = status === "running";
   elements.sendButton.disabled = status === "running";
   renderComposerStatus(session);
   elements.composerStatus.className = `composer-status badge-status ${status === "idle" ? "idle" : "live"}`;
@@ -551,6 +591,7 @@ function setBusy(isBusy) {
   elements.messageInput.disabled = isBusy;
   elements.pickImagesButton.disabled = isBusy;
   elements.clearComposerButton.disabled = isBusy;
+  elements.openSttModal.disabled = isBusy;
   elements.sendButton.disabled = isBusy;
 }
 
@@ -567,6 +608,7 @@ function openCreateModal() {
   closeSidebar();
   closeConfigModal();
   closePromptModal();
+  void closeSttModal();
   closeModelModal();
   closeConfirmModelModal();
   closeRenameModal();
@@ -588,6 +630,7 @@ async function openConfigModal() {
   closeCreateModal();
   closePromptModal();
   closeImageModal();
+  await closeSttModal();
   closeModelModal();
   closeConfirmModelModal();
   closeRenameModal();
@@ -619,6 +662,7 @@ async function openModelModal() {
   closeConfigModal();
   closePromptModal();
   closeImageModal();
+  await closeSttModal();
   closeRenameModal();
   closeDeleteModal();
   closeConfirmModelModal();
@@ -638,6 +682,7 @@ function openPromptModal() {
   closeCreateModal();
   closeConfigModal();
   closeImageModal();
+  void closeSttModal();
   closeModelModal();
   closeConfirmModelModal();
   closeRenameModal();
@@ -682,6 +727,7 @@ function openImageModal() {
   closeCreateModal();
   closeConfigModal();
   closePromptModal();
+  void closeSttModal();
   closeModelModal();
   closeRenameModal();
   closeDeleteModal();
@@ -694,6 +740,252 @@ function openImageModal() {
 function closeImageModal() {
   elements.imageModal.classList.remove("open");
   elements.imageModal.setAttribute("aria-hidden", "true");
+}
+
+async function openSttModal() {
+  closeSidebar();
+  closeCreateModal();
+  closeConfigModal();
+  closePromptModal();
+  closeImageModal();
+  closeModelModal();
+  closeConfirmModelModal();
+  closeRenameModal();
+  closeDeleteModal();
+  resetSttUi();
+  state.stt.shouldKeepAlive = true;
+  elements.sttModal.classList.add("open");
+  elements.sttModal.setAttribute("aria-hidden", "false");
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition || !navigator.mediaDevices?.getUserMedia) {
+    elements.sttStatus.textContent = "Reconnaissance vocale non disponible.";
+    elements.sttTranscript.textContent = "Utilise un navigateur compatible micro + Web Speech API.";
+    return;
+  }
+
+  try {
+    await hydrateMicrophonePermission();
+    await startSttCapture(SpeechRecognition);
+  } catch {
+    elements.sttStatus.textContent = "Accès micro impossible.";
+    elements.sttTranscript.textContent = "Autorise le micro puis réessaie.";
+    notify("error", "Impossible de démarrer la dictée vocale.");
+  }
+}
+
+async function closeSttModal() {
+  state.stt.shouldKeepAlive = false;
+  await stopSttCapture();
+  elements.sttModal.classList.remove("open");
+  elements.sttModal.setAttribute("aria-hidden", "true");
+}
+
+function resetSttUi() {
+  state.stt.transcript = "";
+  state.stt.interim = "";
+  state.stt.audioDetected = false;
+  elements.sttStatus.textContent = "Initialisation…";
+  elements.sttTranscript.textContent = "Parle pour dicter ton message.";
+  updateSttVisualizer(0.16);
+}
+
+async function hydrateMicrophonePermission() {
+  if (!navigator.permissions?.query) {
+    return;
+  }
+  try {
+    const status = await navigator.permissions.query({ name: "microphone" });
+    if (status.state === "denied") {
+      elements.sttStatus.textContent = "Micro refusé.";
+      elements.sttTranscript.textContent = "Le navigateur bloque le micro. Autorise-le dans les réglages du site.";
+    } else if (status.state === "prompt") {
+      elements.sttStatus.textContent = "Autorise le micro…";
+    }
+  } catch {}
+}
+
+async function startSttCapture(SpeechRecognition) {
+  await stopSttCapture();
+
+  state.stt.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (AudioContextClass) {
+    state.stt.audioContext = new AudioContextClass();
+    if (state.stt.audioContext.state === "suspended") {
+      await state.stt.audioContext.resume().catch(() => {});
+    }
+    state.stt.source = state.stt.audioContext.createMediaStreamSource(state.stt.stream);
+    state.stt.analyser = state.stt.audioContext.createAnalyser();
+    state.stt.analyser.fftSize = 128;
+    state.stt.source.connect(state.stt.analyser);
+    animateSttVisualizer();
+  }
+
+  const recognition = new SpeechRecognition();
+  recognition.lang = "fr-FR";
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.onstart = () => {
+    state.stt.listening = true;
+    elements.sttStatus.textContent = "Je t’écoute…";
+  };
+  recognition.onresult = (event) => {
+    let finalText = state.stt.transcript;
+    let interimText = "";
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const transcript = event.results[index]?.[0]?.transcript?.trim() || "";
+      if (!transcript) {
+        continue;
+      }
+      if (event.results[index].isFinal) {
+        finalText = [finalText, transcript].filter(Boolean).join(" ").trim();
+      } else {
+        interimText = [interimText, transcript].filter(Boolean).join(" ").trim();
+      }
+    }
+    state.stt.transcript = finalText;
+    state.stt.interim = interimText;
+    renderSttTranscript();
+  };
+  recognition.onerror = (event) => {
+    state.stt.listening = false;
+    if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+      state.stt.shouldKeepAlive = false;
+      elements.sttStatus.textContent = "Micro refusé.";
+      elements.sttTranscript.textContent = "Le navigateur a refusé l’accès au micro.";
+    } else if (event.error === "no-speech") {
+      elements.sttStatus.textContent = "J’attends ta voix…";
+    } else {
+      elements.sttStatus.textContent = "Dictée interrompue.";
+    }
+    if (!["aborted", "no-speech", "not-allowed", "service-not-allowed"].includes(event.error)) {
+      notify("warning", "La dictée vocale a rencontré une erreur.");
+    }
+  };
+  recognition.onend = () => {
+    state.stt.listening = false;
+    if (elements.sttModal.classList.contains("open") && state.stt.shouldKeepAlive) {
+      elements.sttStatus.textContent = state.stt.transcript ? "Je t’écoute encore…" : "J’attends ta voix…";
+      state.stt.restartTimerId = window.setTimeout(() => {
+        if (elements.sttModal.classList.contains("open") && state.stt.shouldKeepAlive) {
+          startSttCapture(SpeechRecognition).catch(() => {
+            elements.sttStatus.textContent = "Relance impossible.";
+          });
+        }
+      }, 220);
+      return;
+    }
+    if (elements.sttModal.classList.contains("open")) {
+      elements.sttStatus.textContent = state.stt.transcript ? "Dictée terminée." : "Aucune voix détectée.";
+    }
+  };
+
+  state.stt.recognition = recognition;
+  recognition.start();
+}
+
+async function stopSttCapture() {
+  if (state.stt.restartTimerId) {
+    window.clearTimeout(state.stt.restartTimerId);
+    state.stt.restartTimerId = null;
+  }
+
+  if (state.stt.animationFrameId) {
+    cancelAnimationFrame(state.stt.animationFrameId);
+    state.stt.animationFrameId = null;
+  }
+
+  if (state.stt.recognition) {
+    const recognition = state.stt.recognition;
+    state.stt.recognition = null;
+    try {
+      recognition.onstart = null;
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      recognition.stop();
+    } catch {}
+  }
+
+  if (state.stt.source) {
+    try {
+      state.stt.source.disconnect();
+    } catch {}
+    state.stt.source = null;
+  }
+
+  if (state.stt.stream) {
+    for (const track of state.stt.stream.getTracks()) {
+      track.stop();
+    }
+    state.stt.stream = null;
+  }
+
+  if (state.stt.audioContext) {
+    try {
+      await state.stt.audioContext.close();
+    } catch {}
+    state.stt.audioContext = null;
+  }
+
+  state.stt.analyser = null;
+  state.stt.listening = false;
+  updateSttVisualizer(0.16);
+}
+
+function renderSttTranscript() {
+  const text = [state.stt.transcript, state.stt.interim].filter(Boolean).join(" ").trim();
+  elements.sttTranscript.textContent = text || "Parle pour dicter ton message.";
+}
+
+function animateSttVisualizer() {
+  if (!state.stt.analyser) {
+    updateSttVisualizer(0.2);
+    return;
+  }
+
+  const buffer = new Uint8Array(state.stt.analyser.frequencyBinCount);
+  const tick = () => {
+    if (!state.stt.analyser) {
+      return;
+    }
+    state.stt.analyser.getByteFrequencyData(buffer);
+    const average = buffer.reduce((sum, value) => sum + value, 0) / (buffer.length * 255 || 1);
+    if (average > 0.08 && !state.stt.audioDetected) {
+      state.stt.audioDetected = true;
+      if (!state.stt.transcript && !state.stt.interim) {
+        elements.sttStatus.textContent = "Voix détectée… transcription en attente.";
+      }
+    }
+    updateSttVisualizer(0.18 + average * 1.4);
+    state.stt.animationFrameId = requestAnimationFrame(tick);
+  };
+  tick();
+}
+
+function updateSttVisualizer(level) {
+  const bars = elements.sttLevelMeter ? [...elements.sttLevelMeter.querySelectorAll(".stt-bar")] : [];
+  bars.forEach((bar, index) => {
+    const swing = ((index % 2 === 0 ? 0.08 : 0.18) * (index + 1)) / 10;
+    const scale = Math.max(0.22, Math.min(1.7, level + swing));
+    bar.style.setProperty("--bar-scale", String(scale));
+  });
+}
+
+async function insertSttTranscript() {
+  const text = [state.stt.transcript, state.stt.interim].filter(Boolean).join(" ").trim();
+  if (!text) {
+    notify("warning", "Aucun texte dicté.");
+    return;
+  }
+
+  const current = elements.messageInput.value.trim();
+  elements.messageInput.value = current ? `${current}\n${text}` : text;
+  autoResizeMessageInput();
+  await closeSttModal();
+  elements.messageInput.focus();
+  notify("success", "Texte dicté inséré.");
 }
 
 function renderPromptList() {

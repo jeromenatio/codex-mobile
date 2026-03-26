@@ -83,6 +83,9 @@
               <button id="clearComposerButton" class="plain-button icon-button action-button" type="button" aria-label="Vider le message">
                 <i class="bi bi-eraser-fill icon-glyph" aria-hidden="true"></i>
               </button>
+              <button id="openSttModal" class="plain-button icon-button action-button" type="button" aria-label="Dictée vocale">
+                <i class="bi bi-mic-fill icon-glyph" aria-hidden="true"></i>
+              </button>
               <button id="sendButton" class="primary-button send-button" type="submit" aria-label="Envoyer">
                 <i class="bi bi-send-fill send-icon" aria-hidden="true"></i>
               </button>
@@ -224,6 +227,37 @@
             <button id="clearImagesButton" class="ghost-button" type="button">Tout vider</button>
             <button id="addMoreImagesButton" class="ghost-button" type="button">Ajouter</button>
             <button id="doneImageModalButton" class="primary-button" type="button">Terminer</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="sttModal" class="modal-layer" aria-hidden="true">
+        <div id="sttBackdrop" class="modal-backdrop"></div>
+        <div class="modal-card modal-card-sm" role="dialog" aria-modal="true" aria-labelledby="sttModalTitle">
+          <div class="modal-header section-title">
+            <h2 id="sttModalTitle">Dictée vocale</h2>
+            <button id="closeSttModal" class="icon-button plain-button" type="button" aria-label="Fermer">
+              <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
+            </button>
+          </div>
+          <div class="modal-body stt-body">
+            <div class="stt-orb" aria-hidden="true">
+              <div id="sttLevelMeter" class="stt-level-meter">
+                <span class="stt-bar"></span>
+                <span class="stt-bar"></span>
+                <span class="stt-bar"></span>
+                <span class="stt-bar"></span>
+                <span class="stt-bar"></span>
+                <span class="stt-bar"></span>
+                <span class="stt-bar"></span>
+              </div>
+            </div>
+            <div id="sttStatus" class="stt-status">Initialisation…</div>
+            <div id="sttTranscript" class="stt-transcript">Parle pour dicter ton message.</div>
+          </div>
+          <div class="modal-actions modal-footer">
+            <button id="cancelSttButton" class="ghost-button" type="button">Annuler</button>
+            <button id="insertSttButton" class="primary-button" type="button">Insérer</button>
           </div>
         </div>
       </section>
