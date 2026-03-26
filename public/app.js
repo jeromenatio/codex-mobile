@@ -83,6 +83,7 @@ const elements = {
   sessionList: document.getElementById("sessionList"),
   sessionCount: document.getElementById("sessionCount"),
   workspaceCount: document.getElementById("workspaceCount"),
+  activeMessageCount: document.getElementById("activeMessageCount"),
   activeWorkspace: document.getElementById("activeWorkspace"),
   activeSessionName: document.getElementById("activeSessionName"),
   composerStatus: document.getElementById("composerStatus"),
@@ -460,6 +461,7 @@ function upsertMessage(message) {
 }
 
 function updateHeader(session) {
+  elements.activeMessageCount.textContent = session ? `${session.messageCount || 0} msg` : "";
   elements.activeWorkspace.textContent = session ? session.workspaceName || "" : "";
   elements.activeSessionName.textContent = session ? session.name || session.workspaceName || "" : "";
   const status = session?.status || "idle";

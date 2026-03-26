@@ -237,6 +237,13 @@ textarea {
   backdrop-filter: blur(16px);
 }
 
+.session-bar-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .session-bar-workspace,
 .session-bar-session {
   min-width: 0;
@@ -245,12 +252,11 @@ textarea {
 }
 
 .session-bar-workspace {
-  margin-left: auto;
   flex: 0 0 auto;
-  max-width: 42%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.session-bar-count {
+  flex: 0 0 auto;
 }
 
 .session-bar-session {
@@ -740,7 +746,7 @@ textarea {
 .send-button {
   height: 34px;
   width: 34px;
-  padding: 0;
+  padding: 6px 0 0;
   border-radius: 999px;
 }
 
