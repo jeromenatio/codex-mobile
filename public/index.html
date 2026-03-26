@@ -74,6 +74,9 @@
             <div id="composerStatus" class="composer-status">Aucune session</div>
             <div class="composer-actions">
               <input id="imageInput" type="file" accept="image/*" multiple hidden />
+              <button id="openPromptModal" class="plain-button icon-button action-button" type="button" aria-label="Prompts rapides">
+                <i class="bi bi-lightning-charge-fill icon-glyph" aria-hidden="true"></i>
+              </button>
               <button id="pickImagesButton" class="plain-button icon-button action-button" type="button" aria-label="Ajouter des images">
                 <i class="bi bi-image-fill icon-glyph" aria-hidden="true"></i>
               </button>
@@ -221,6 +224,38 @@
             <button id="clearImagesButton" class="ghost-button" type="button">Tout vider</button>
             <button id="addMoreImagesButton" class="ghost-button" type="button">Ajouter</button>
             <button id="doneImageModalButton" class="primary-button" type="button">Terminer</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="promptModal" class="modal-layer" aria-hidden="true">
+        <div id="promptBackdrop" class="modal-backdrop"></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="promptModalTitle">
+          <div class="modal-header section-title">
+            <h2 id="promptModalTitle">Prompts rapides</h2>
+            <button id="closePromptModal" class="icon-button plain-button" type="button" aria-label="Fermer">
+              <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
+            </button>
+          </div>
+          <div class="modal-body prompt-modal-body">
+            <form id="promptForm" class="stack prompt-form">
+              <label class="field">
+                <span>Nom</span>
+                <input id="promptNameInput" name="name" type="text" placeholder="Ex: commit + push" required />
+              </label>
+              <label class="field">
+                <span>Prompt</span>
+                <textarea id="promptTextInput" name="text" rows="4" placeholder="Texte du prompt rapide" required></textarea>
+              </label>
+              <div class="prompt-form-actions">
+                <button id="resetPromptFormButton" class="ghost-button" type="button">Nouveau</button>
+                <button id="savePromptButton" class="primary-button" type="submit">Enregistrer</button>
+              </div>
+            </form>
+            <div id="promptList" class="prompt-list"></div>
+          </div>
+          <div class="modal-actions modal-footer">
+            <button id="closePromptFooterButton" class="ghost-button" type="button">Fermer</button>
           </div>
         </div>
       </section>

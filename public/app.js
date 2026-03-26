@@ -29,6 +29,7 @@ const state = {
   pendingRenameSessionId: null,
   pendingDeleteSessionId: null,
   pendingModelSlug: null,
+  editingPromptId: null,
 };
 
 const elements = {
@@ -48,6 +49,17 @@ const elements = {
   approvalNeverInput: document.getElementById("approvalNeverInput"),
   hideFullAccessWarningInput: document.getElementById("hideFullAccessWarningInput"),
   searchInput: document.getElementById("searchInput"),
+  openPromptModal: document.getElementById("openPromptModal"),
+  promptModal: document.getElementById("promptModal"),
+  promptBackdrop: document.getElementById("promptBackdrop"),
+  closePromptModal: document.getElementById("closePromptModal"),
+  closePromptFooterButton: document.getElementById("closePromptFooterButton"),
+  promptForm: document.getElementById("promptForm"),
+  promptNameInput: document.getElementById("promptNameInput"),
+  promptTextInput: document.getElementById("promptTextInput"),
+  savePromptButton: document.getElementById("savePromptButton"),
+  resetPromptFormButton: document.getElementById("resetPromptFormButton"),
+  promptList: document.getElementById("promptList"),
   imageModal: document.getElementById("imageModal"),
   imageBackdrop: document.getElementById("imageBackdrop"),
   closeImageModal: document.getElementById("closeImageModal"),
@@ -127,6 +139,12 @@ async function bootstrap() {
 
 function bindEvents() {
   elements.openModelModal.addEventListener("click", openModelModal);
+  elements.openPromptModal.addEventListener("click", openPromptModal);
+  elements.closePromptModal.addEventListener("click", closePromptModal);
+  elements.closePromptFooterButton.addEventListener("click", closePromptModal);
+  elements.promptBackdrop.addEventListener("click", closePromptModal);
+  elements.promptForm.addEventListener("submit", onSavePrompt);
+  elements.resetPromptFormButton.addEventListener("click", resetPromptForm);
   elements.closeImageModal.addEventListener("click", closeImageModal);
   elements.doneImageModalButton.addEventListener("click", closeImageModal);
   elements.addMoreImagesButton.addEventListener("click", () => elements.imageInput.click());
@@ -175,6 +193,7 @@ function bindEvents() {
     if (event.key === "Escape") {
       closeCreateModal();
       closeConfigModal();
+      closePromptModal();
       closeImageModal();
       closeModelModal();
       closeConfirmModelModal();
@@ -537,6 +556,7 @@ function autoResizeMessageInput() {
 function openCreateModal() {
   closeSidebar();
   closeConfigModal();
+  closePromptModal();
   closeModelModal();
   closeConfirmModelModal();
   closeRenameModal();
@@ -556,6 +576,7 @@ function closeCreateModal() {
 async function openConfigModal() {
   closeSidebar();
   closeCreateModal();
+  closePromptModal();
   closeImageModal();
   closeModelModal();
   closeConfirmModelModal();
@@ -586,6 +607,7 @@ async function openModelModal() {
   closeSidebar();
   closeCreateModal();
   closeConfigModal();
+  closePromptModal();
   closeImageModal();
   closeRenameModal();
   closeDeleteModal();
@@ -601,6 +623,29 @@ async function openModelModal() {
   elements.modelModal.setAttribute("aria-hidden", "false");
 }
 
+function openPromptModal() {
+  closeSidebar();
+  closeCreateModal();
+  closeConfigModal();
+  closeImageModal();
+  closeModelModal();
+  closeConfirmModelModal();
+  closeRenameModal();
+  closeDeleteModal();
+  renderPromptList();
+  resetPromptForm();
+  elements.promptModal.classList.add("open");
+  elements.promptModal.setAttribute("aria-hidden", "false");
+  window.setTimeout(() => {
+    elements.promptNameInput.focus();
+  }, 0);
+}
+
+function closePromptModal() {
+  elements.promptModal.classList.remove("open");
+  elements.promptModal.setAttribute("aria-hidden", "true");
+}
+
 function closeModelModal() {
   elements.modelModal.classList.remove("open");
   elements.modelModal.setAttribute("aria-hidden", "true");
@@ -610,6 +655,7 @@ function openImageModal() {
   closeSidebar();
   closeCreateModal();
   closeConfigModal();
+  closePromptModal();
   closeModelModal();
   closeRenameModal();
   closeDeleteModal();
@@ -622,6 +668,130 @@ function openImageModal() {
 function closeImageModal() {
   elements.imageModal.classList.remove("open");
   elements.imageModal.setAttribute("aria-hidden", "true");
+}
+
+function renderPromptList() {
+  const prompts = state.settings.prompts || [];
+  if (!prompts.length) {
+    elements.promptList.innerHTML = `<div class="empty-state prompt-empty">Aucun prompt enregistré.</div>`;
+    return;
+  }
+
+  elements.promptList.innerHTML = prompts
+    .map((prompt) => {
+      const preview = escapeHtml(prompt.text).replace(/\n/g, " ");
+      return `
+        <article class="prompt-item" data-prompt-id="${escapeHtml(prompt.id)}">
+          <div class="prompt-copy">
+            <strong title="${escapeHtml(prompt.name)}">${escapeHtml(prompt.name)}</strong>
+            <p title="${escapeHtml(prompt.text)}">${preview}</p>
+          </div>
+          <div class="prompt-item-actions">
+            <button class="session-action icon-button plain-button" type="button" data-prompt-action="use" data-prompt-id="${escapeHtml(prompt.id)}" aria-label="Utiliser ${escapeHtml(prompt.name)}">
+              <i class="bi bi-arrow-return-left icon-glyph" aria-hidden="true"></i>
+            </button>
+            <button class="session-action icon-button plain-button" type="button" data-prompt-action="edit" data-prompt-id="${escapeHtml(prompt.id)}" aria-label="Modifier ${escapeHtml(prompt.name)}">
+              <i class="bi bi-pencil-fill icon-glyph" aria-hidden="true"></i>
+            </button>
+            <button class="session-action icon-button plain-button" type="button" data-prompt-action="delete" data-prompt-id="${escapeHtml(prompt.id)}" aria-label="Supprimer ${escapeHtml(prompt.name)}">
+              <i class="bi bi-trash3-fill icon-glyph" aria-hidden="true"></i>
+            </button>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+
+  for (const button of elements.promptList.querySelectorAll("[data-prompt-action]")) {
+    button.addEventListener("click", () => {
+      const promptId = button.dataset.promptId;
+      const action = button.dataset.promptAction;
+      if (action === "use") {
+        usePrompt(promptId);
+        return;
+      }
+      if (action === "edit") {
+        startEditPrompt(promptId);
+        return;
+      }
+      if (action === "delete") {
+        deletePrompt(promptId);
+      }
+    });
+  }
+}
+
+function resetPromptForm() {
+  state.editingPromptId = null;
+  elements.promptForm.reset();
+  elements.savePromptButton.textContent = "Enregistrer";
+}
+
+function startEditPrompt(promptId) {
+  const prompt = (state.settings.prompts || []).find((item) => item.id === promptId);
+  if (!prompt) {
+    notify("error", "Prompt introuvable.");
+    return;
+  }
+  state.editingPromptId = promptId;
+  elements.promptNameInput.value = prompt.name || "";
+  elements.promptTextInput.value = prompt.text || "";
+  elements.savePromptButton.textContent = "Mettre à jour";
+  elements.promptNameInput.focus();
+}
+
+function usePrompt(promptId) {
+  const prompt = (state.settings.prompts || []).find((item) => item.id === promptId);
+  if (!prompt) {
+    notify("error", "Prompt introuvable.");
+    return;
+  }
+  elements.messageInput.value = prompt.text || "";
+  autoResizeMessageInput();
+  closePromptModal();
+  elements.messageInput.focus();
+  notify("success", "Prompt inséré.");
+}
+
+function deletePrompt(promptId) {
+  const prompts = (state.settings.prompts || []).filter((item) => item.id !== promptId);
+  state.settings.prompts = prompts;
+  if (state.editingPromptId === promptId) {
+    resetPromptForm();
+  }
+  persistSettings();
+  renderPromptList();
+  notify("success", "Prompt supprimé.");
+}
+
+function onSavePrompt(event) {
+  event.preventDefault();
+  const name = elements.promptNameInput.value.trim();
+  const text = elements.promptTextInput.value.trim();
+
+  if (!name || !text) {
+    notify("warning", "Nom et prompt sont requis.");
+    return;
+  }
+
+  const prompts = [...(state.settings.prompts || [])];
+  if (state.editingPromptId) {
+    const index = prompts.findIndex((item) => item.id === state.editingPromptId);
+    if (index === -1) {
+      notify("error", "Prompt introuvable.");
+      return;
+    }
+    prompts[index] = { ...prompts[index], name, text };
+    notify("success", "Prompt mis à jour.");
+  } else {
+    prompts.unshift({ id: crypto.randomUUID(), name, text });
+    notify("success", "Prompt enregistré.");
+  }
+
+  state.settings.prompts = prompts;
+  persistSettings();
+  renderPromptList();
+  resetPromptForm();
 }
 
 function renderImageManager() {
@@ -1037,7 +1207,7 @@ async function onSaveConfig(event) {
   state.settings.theme = theme;
   state.settings.notificationDurationSeconds = seconds;
   state.codexConfig = await response.json();
-  localStorage.setItem(settingsKey, JSON.stringify(state.settings));
+  persistSettings();
   applyTheme(theme);
   closeConfigModal();
   notify("success", `Configuration enregistree. Notifications a ${seconds}s.`);
@@ -1050,10 +1220,24 @@ function loadSettings() {
     return {
       theme: normalizeTheme(parsed.theme),
       notificationDurationSeconds: clampDuration(parsed.notificationDurationSeconds),
+      prompts: Array.isArray(parsed.prompts)
+        ? parsed.prompts
+            .filter((item) => item && typeof item.name === "string" && typeof item.text === "string")
+            .map((item) => ({
+              id: typeof item.id === "string" && item.id ? item.id : crypto.randomUUID(),
+              name: item.name.trim(),
+              text: item.text.trim(),
+            }))
+            .filter((item) => item.name && item.text)
+        : [],
     };
   } catch {
-    return { theme: "sandstone", notificationDurationSeconds: 5 };
+    return { theme: "sandstone", notificationDurationSeconds: 5, prompts: [] };
   }
+}
+
+function persistSettings() {
+  localStorage.setItem(settingsKey, JSON.stringify(state.settings));
 }
 
 function applyTheme(theme) {
