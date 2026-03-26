@@ -24,14 +24,14 @@
           <button id="scrollBottomButton" class="icon-button plain-button" type="button" aria-label="Aller en bas de la conversation">
             <i class="bi bi-arrow-down icon-glyph" aria-hidden="true"></i>
           </button>
-          <button id="openConfigModal" class="icon-button plain-button" type="button" aria-label="Configuration">
-            <i class="bi bi-gear-fill icon-glyph" aria-hidden="true"></i>
-          </button>
           <button id="openCreateModal" class="icon-button plain-button" type="button" aria-label="Créer une session">
             <i class="bi bi-plus-lg icon-glyph" aria-hidden="true"></i>
           </button>
           <button id="toggleSidebar" class="icon-button plain-button" type="button" aria-label="Ouvrir les sessions">
             <i class="bi bi-chat-left-text-fill icon-glyph" aria-hidden="true"></i>
+          </button>
+          <button id="openConfigModal" class="icon-button plain-button" type="button" aria-label="Configuration">
+            <i class="bi bi-gear-fill icon-glyph" aria-hidden="true"></i>
           </button>
         </div>
       </header>
@@ -201,6 +201,26 @@
           </div>
           <div class="modal-body">
             <div id="modelList" class="model-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="imageModal" class="modal-layer" aria-hidden="true">
+        <div id="imageBackdrop" class="modal-backdrop"></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="imageModalTitle">
+          <div class="modal-header section-title">
+            <h2 id="imageModalTitle">Images jointes</h2>
+            <button id="closeImageModal" class="icon-button plain-button" type="button" aria-label="Fermer">
+              <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
+            </button>
+          </div>
+          <div class="modal-body">
+            <div id="imageManagerList" class="image-manager-list"></div>
+          </div>
+          <div class="modal-actions modal-footer">
+            <button id="clearImagesButton" class="ghost-button" type="button">Tout vider</button>
+            <button id="addMoreImagesButton" class="ghost-button" type="button">Ajouter</button>
+            <button id="doneImageModalButton" class="primary-button" type="button">Terminer</button>
           </div>
         </div>
       </section>

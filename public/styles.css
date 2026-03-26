@@ -916,6 +916,10 @@ textarea {
   border-top: 1px solid rgba(22, 18, 15, 0.08);
 }
 
+#imageModal .modal-actions {
+  justify-content: space-between;
+}
+
 .modal-actions .ghost-button,
 .modal-actions .primary-button {
   flex: 0 0 auto;
@@ -927,6 +931,89 @@ textarea {
 .model-list {
   display: grid;
   gap: 10px;
+}
+
+.image-manager-list {
+  position: relative;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  min-height: 220px;
+}
+
+#imageModal .modal-card {
+  max-height: calc(100dvh - 20px);
+}
+
+.image-card {
+  overflow: hidden;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(22, 18, 15, 0.08);
+}
+
+.image-preview {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  background: rgba(22, 18, 15, 0.08);
+}
+
+.image-card-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+}
+
+.image-name {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
+
+.image-remove-button {
+  flex: 0 0 auto;
+}
+
+.image-empty {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: row;
+  text-align: center;
+  padding: 12px;
+}
+
+.image-loading {
+  color: var(--ink-soft);
+}
+
+.image-loading::before {
+  content: "";
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-right: 10px;
+  border-radius: 999px;
+  border: 2px solid rgba(22, 18, 15, 0.14);
+  box-sizing: border-box;
+  border-top-color: var(--accent);
+  animation: image-spin 700ms linear infinite;
+}
+
+@keyframes image-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .model-option {

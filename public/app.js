@@ -25,6 +25,7 @@ const state = {
   },
   notificationTimers: new Map(),
   pendingAttachments: [],
+  imagePickerBusy: false,
   pendingRenameSessionId: null,
   pendingDeleteSessionId: null,
   pendingModelSlug: null,
@@ -47,6 +48,13 @@ const elements = {
   approvalNeverInput: document.getElementById("approvalNeverInput"),
   hideFullAccessWarningInput: document.getElementById("hideFullAccessWarningInput"),
   searchInput: document.getElementById("searchInput"),
+  imageModal: document.getElementById("imageModal"),
+  imageBackdrop: document.getElementById("imageBackdrop"),
+  closeImageModal: document.getElementById("closeImageModal"),
+  doneImageModalButton: document.getElementById("doneImageModalButton"),
+  addMoreImagesButton: document.getElementById("addMoreImagesButton"),
+  clearImagesButton: document.getElementById("clearImagesButton"),
+  imageManagerList: document.getElementById("imageManagerList"),
   modelModal: document.getElementById("modelModal"),
   modelBackdrop: document.getElementById("modelBackdrop"),
   closeModelModal: document.getElementById("closeModelModal"),
@@ -119,6 +127,11 @@ async function bootstrap() {
 
 function bindEvents() {
   elements.openModelModal.addEventListener("click", openModelModal);
+  elements.closeImageModal.addEventListener("click", closeImageModal);
+  elements.doneImageModalButton.addEventListener("click", closeImageModal);
+  elements.addMoreImagesButton.addEventListener("click", () => elements.imageInput.click());
+  elements.clearImagesButton.addEventListener("click", clearPendingImages);
+  elements.imageBackdrop.addEventListener("click", closeImageModal);
   elements.closeModelModal.addEventListener("click", closeModelModal);
   elements.modelBackdrop.addEventListener("click", closeModelModal);
   elements.closeConfirmModelModal.addEventListener("click", closeConfirmModelModal);
@@ -148,7 +161,7 @@ function bindEvents() {
   elements.closeSidebar?.addEventListener("click", closeSidebar);
   elements.createSessionForm.addEventListener("submit", onCreateSession);
   elements.messageForm.addEventListener("submit", onSendMessage);
-  elements.pickImagesButton.addEventListener("click", () => elements.imageInput.click());
+  elements.pickImagesButton.addEventListener("click", openImageModal);
   elements.clearComposerButton.addEventListener("click", clearComposer);
   elements.imageInput.addEventListener("change", onPickImages);
   elements.messageInput.addEventListener("input", autoResizeMessageInput);
@@ -162,6 +175,7 @@ function bindEvents() {
     if (event.key === "Escape") {
       closeCreateModal();
       closeConfigModal();
+      closeImageModal();
       closeModelModal();
       closeConfirmModelModal();
       closeRenameModal();
@@ -531,6 +545,7 @@ function closeCreateModal() {
 async function openConfigModal() {
   closeSidebar();
   closeCreateModal();
+  closeImageModal();
   closeModelModal();
   closeConfirmModelModal();
   closeRenameModal();
@@ -560,6 +575,7 @@ async function openModelModal() {
   closeSidebar();
   closeCreateModal();
   closeConfigModal();
+  closeImageModal();
   closeRenameModal();
   closeDeleteModal();
   closeConfirmModelModal();
@@ -577,6 +593,59 @@ async function openModelModal() {
 function closeModelModal() {
   elements.modelModal.classList.remove("open");
   elements.modelModal.setAttribute("aria-hidden", "true");
+}
+
+function openImageModal() {
+  closeSidebar();
+  closeCreateModal();
+  closeConfigModal();
+  closeModelModal();
+  closeRenameModal();
+  closeDeleteModal();
+  closeConfirmModelModal();
+  renderImageManager();
+  elements.imageModal.classList.add("open");
+  elements.imageModal.setAttribute("aria-hidden", "false");
+}
+
+function closeImageModal() {
+  elements.imageModal.classList.remove("open");
+  elements.imageModal.setAttribute("aria-hidden", "true");
+}
+
+function renderImageManager() {
+  if (state.imagePickerBusy) {
+    elements.imageManagerList.innerHTML = `<div class="image-empty image-loading">Ajout des images...</div>`;
+    return;
+  }
+
+  if (!state.pendingAttachments.length) {
+    elements.imageManagerList.innerHTML = `<div class="empty-state image-empty">Aucune image attachée.</div>`;
+    return;
+  }
+
+  elements.imageManagerList.innerHTML = state.pendingAttachments
+    .map((image) => {
+      const safeName = escapeHtml(image.name || "image");
+      return `
+        <article class="image-card" data-image-id="${escapeHtml(image.id)}">
+          <img class="image-preview" src="${escapeHtml(image.dataUrl)}" alt="${safeName}" />
+          <div class="image-card-footer">
+            <span class="image-name" title="${safeName}">${safeName}</span>
+            <button class="icon-button plain-button image-remove-button" type="button" data-remove-image="${escapeHtml(image.id)}" aria-label="Retirer ${safeName}">
+              <i class="bi bi-trash3-fill icon-glyph" aria-hidden="true"></i>
+            </button>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+
+  for (const button of elements.imageManagerList.querySelectorAll("[data-remove-image]")) {
+    button.addEventListener("click", () => {
+      removePendingImage(button.dataset.removeImage);
+    });
+  }
 }
 
 function openConfirmModelModal(slug) {
@@ -841,16 +910,22 @@ async function onPickImages(event) {
     return;
   }
 
+  state.imagePickerBusy = true;
+  renderImageManager();
+
   const images = [];
   for (const file of files) {
     images.push({
+      id: crypto.randomUUID(),
       name: file.name,
       dataUrl: await readFileAsDataUrl(file),
     });
   }
 
+  state.imagePickerBusy = false;
   state.pendingAttachments.push(...images);
   elements.imageInput.value = "";
+  renderImageManager();
   elements.composerStatus.textContent = buildComposerStatus(
     state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null
   );
@@ -860,8 +935,28 @@ async function onPickImages(event) {
 function clearComposer() {
   elements.messageInput.value = "";
   elements.imageInput.value = "";
+  state.imagePickerBusy = false;
   state.pendingAttachments = [];
+  renderImageManager();
   autoResizeMessageInput();
+  elements.composerStatus.textContent = buildComposerStatus(
+    state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null
+  );
+}
+
+function clearPendingImages() {
+  state.imagePickerBusy = false;
+  state.pendingAttachments = [];
+  elements.imageInput.value = "";
+  renderImageManager();
+  elements.composerStatus.textContent = buildComposerStatus(
+    state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null
+  );
+}
+
+function removePendingImage(imageId) {
+  state.pendingAttachments = state.pendingAttachments.filter((image) => image.id !== imageId);
+  renderImageManager();
   elements.composerStatus.textContent = buildComposerStatus(
     state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null
   );
