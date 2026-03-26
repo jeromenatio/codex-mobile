@@ -14,13 +14,24 @@ const state = {
   socket: null,
   messages: [],
   settings: loadSettings(),
+  codexConfig: {
+    model: "gpt-5.4",
+    availableModels: [],
+    sandboxDangerFullAccess: false,
+    approvalNever: false,
+    hideFullAccessWarning: false,
+    search: false,
+  },
   notificationTimers: new Map(),
   pendingAttachments: [],
   pendingRenameSessionId: null,
   pendingDeleteSessionId: null,
+  pendingModelSlug: null,
 };
 
 const elements = {
+  openModelModal: document.getElementById("openModelModal"),
+  activeModelLabel: document.getElementById("activeModelLabel"),
   openConfigModal: document.getElementById("openConfigModal"),
   scrollTopButton: document.getElementById("scrollTopButton"),
   scrollBottomButton: document.getElementById("scrollBottomButton"),
@@ -30,6 +41,20 @@ const elements = {
   configBackdrop: document.getElementById("configBackdrop"),
   configForm: document.getElementById("configForm"),
   notificationDurationInput: document.getElementById("notificationDurationInput"),
+  sandboxDangerInput: document.getElementById("sandboxDangerInput"),
+  approvalNeverInput: document.getElementById("approvalNeverInput"),
+  hideFullAccessWarningInput: document.getElementById("hideFullAccessWarningInput"),
+  searchInput: document.getElementById("searchInput"),
+  modelModal: document.getElementById("modelModal"),
+  modelBackdrop: document.getElementById("modelBackdrop"),
+  closeModelModal: document.getElementById("closeModelModal"),
+  modelList: document.getElementById("modelList"),
+  confirmModelModal: document.getElementById("confirmModelModal"),
+  confirmModelBackdrop: document.getElementById("confirmModelBackdrop"),
+  closeConfirmModelModal: document.getElementById("closeConfirmModelModal"),
+  cancelConfirmModelModal: document.getElementById("cancelConfirmModelModal"),
+  confirmModelChangeButton: document.getElementById("confirmModelChangeButton"),
+  confirmModelText: document.getElementById("confirmModelText"),
   renameModal: document.getElementById("renameModal"),
   renameBackdrop: document.getElementById("renameBackdrop"),
   closeRenameModal: document.getElementById("closeRenameModal"),
@@ -73,6 +98,11 @@ bootstrap();
 
 async function bootstrap() {
   bindEvents();
+  try {
+    await refreshCodexConfig();
+  } catch (error) {
+    console.warn("Codex config bootstrap failed:", error);
+  }
   await refreshBootstrap();
   const targetSessionId = pickSessionId();
   if (targetSessionId) {
@@ -84,6 +114,13 @@ async function bootstrap() {
 }
 
 function bindEvents() {
+  elements.openModelModal.addEventListener("click", openModelModal);
+  elements.closeModelModal.addEventListener("click", closeModelModal);
+  elements.modelBackdrop.addEventListener("click", closeModelModal);
+  elements.closeConfirmModelModal.addEventListener("click", closeConfirmModelModal);
+  elements.cancelConfirmModelModal.addEventListener("click", closeConfirmModelModal);
+  elements.confirmModelBackdrop.addEventListener("click", closeConfirmModelModal);
+  elements.confirmModelChangeButton.addEventListener("click", confirmModelChange);
   elements.openConfigModal.addEventListener("click", openConfigModal);
   elements.scrollTopButton.addEventListener("click", scrollConversationTop);
   elements.scrollBottomButton.addEventListener("click", scrollConversationBottom);
@@ -121,6 +158,8 @@ function bindEvents() {
     if (event.key === "Escape") {
       closeCreateModal();
       closeConfigModal();
+      closeModelModal();
+      closeConfirmModelModal();
       closeRenameModal();
       closeDeleteModal();
       closeSidebar();
@@ -132,6 +171,46 @@ async function refreshBootstrap() {
   const response = await fetch("/api/bootstrap");
   state.bootstrap = await response.json();
   renderSessionList();
+}
+
+async function refreshCodexConfig() {
+  const response = await fetch("/api/config/codex");
+  if (!response.ok) {
+    throw new Error("Impossible de charger la configuration Codex.");
+  }
+  state.codexConfig = await response.json();
+  renderModelTrigger();
+}
+
+function renderModelTrigger() {
+  elements.activeModelLabel.textContent = state.codexConfig.model || "gpt-5.4";
+}
+
+function renderModelList() {
+  const models = state.codexConfig.availableModels || [];
+  const activeModel = state.codexConfig.model || "gpt-5.4";
+
+  elements.modelList.innerHTML = models
+    .map((model) => {
+      const active = model.slug === activeModel ? "active" : "";
+      const description = model.description ? `<small>${escapeHtml(model.description)}</small>` : "";
+      return `
+        <button class="model-option ${active}" type="button" data-model-slug="${escapeHtml(model.slug)}">
+          <span class="model-option-copy">
+            <strong>${escapeHtml(model.label || model.slug)}</strong>
+            ${description}
+          </span>
+          ${model.slug === activeModel ? '<i class="bi bi-check2-circle" aria-hidden="true"></i>' : '<i class="bi bi-circle" aria-hidden="true"></i>'}
+        </button>
+      `;
+    })
+    .join("");
+
+  for (const button of elements.modelList.querySelectorAll("[data-model-slug]")) {
+    button.addEventListener("click", () => {
+      void requestModelChange(button.dataset.modelSlug);
+    });
+  }
 }
 
 function renderSessionList() {
@@ -173,7 +252,7 @@ function renderSessionList() {
           </div>
           <div class="session-meta">
             <span class="mini-badge ${session.status === "running" ? "live" : "muted"}">${escapeHtml(statusLabel)}</span>
-            <span class="mini-badge workspace-badge" title="${escapeHtml(session.workspaceName)}">${escapeHtml(session.workspaceName)}</span>
+            <span class="mini-badge workspace-badge muted" title="${escapeHtml(session.workspaceName)}">${escapeHtml(session.workspaceName)}</span>
           </div>
         </article>
       `;
@@ -428,6 +507,8 @@ function autoResizeMessageInput() {
 function openCreateModal() {
   closeSidebar();
   closeConfigModal();
+  closeModelModal();
+  closeConfirmModelModal();
   closeRenameModal();
   closeDeleteModal();
   elements.createModal.classList.add("open");
@@ -442,12 +523,24 @@ function closeCreateModal() {
   elements.createModal.setAttribute("aria-hidden", "true");
 }
 
-function openConfigModal() {
+async function openConfigModal() {
   closeSidebar();
   closeCreateModal();
+  closeModelModal();
+  closeConfirmModelModal();
   closeRenameModal();
   closeDeleteModal();
+  try {
+    await refreshCodexConfig();
+  } catch {
+    notify("error", "Chargement de la configuration impossible.");
+    return;
+  }
   elements.notificationDurationInput.value = String(state.settings.notificationDurationSeconds);
+  elements.sandboxDangerInput.checked = Boolean(state.codexConfig.sandboxDangerFullAccess);
+  elements.approvalNeverInput.checked = Boolean(state.codexConfig.approvalNever);
+  elements.hideFullAccessWarningInput.checked = Boolean(state.codexConfig.hideFullAccessWarning);
+  elements.searchInput.checked = Boolean(state.codexConfig.search);
   elements.configModal.classList.add("open");
   elements.configModal.setAttribute("aria-hidden", "false");
 }
@@ -455,6 +548,42 @@ function openConfigModal() {
 function closeConfigModal() {
   elements.configModal.classList.remove("open");
   elements.configModal.setAttribute("aria-hidden", "true");
+}
+
+async function openModelModal() {
+  closeSidebar();
+  closeCreateModal();
+  closeConfigModal();
+  closeRenameModal();
+  closeDeleteModal();
+  closeConfirmModelModal();
+  try {
+    await refreshCodexConfig();
+  } catch {
+    notify("error", "Chargement des modèles impossible.");
+    return;
+  }
+  renderModelList();
+  elements.modelModal.classList.add("open");
+  elements.modelModal.setAttribute("aria-hidden", "false");
+}
+
+function closeModelModal() {
+  elements.modelModal.classList.remove("open");
+  elements.modelModal.setAttribute("aria-hidden", "true");
+}
+
+function openConfirmModelModal(slug) {
+  state.pendingModelSlug = slug;
+  elements.confirmModelText.textContent = `Tu vas changer le modèle actif pour "${slug}" alors qu'une session est déjà en cours d'usage. Confirmer ?`;
+  elements.confirmModelModal.classList.add("open");
+  elements.confirmModelModal.setAttribute("aria-hidden", "false");
+}
+
+function closeConfirmModelModal() {
+  state.pendingModelSlug = null;
+  elements.confirmModelModal.classList.remove("open");
+  elements.confirmModelModal.setAttribute("aria-hidden", "true");
 }
 
 function openRenameModal(session) {
@@ -501,6 +630,63 @@ function toggleSidebar() {
 
 function closeSidebar() {
   elements.sidebar.classList.remove("open");
+}
+
+async function requestModelChange(slug) {
+  if (!slug || slug === state.codexConfig.model) {
+    closeModelModal();
+    return;
+  }
+
+  if (shouldConfirmModelChange()) {
+    closeModelModal();
+    openConfirmModelModal(slug);
+    return;
+  }
+
+  await applyModelChange(slug);
+}
+
+function shouldConfirmModelChange() {
+  if (!state.activeSessionId) {
+    return false;
+  }
+  return state.messages.length > 0;
+}
+
+async function confirmModelChange() {
+  const slug = state.pendingModelSlug;
+  if (!slug) {
+    return;
+  }
+  closeConfirmModelModal();
+  await applyModelChange(slug);
+}
+
+async function applyModelChange(slug) {
+  const payload = {
+    model: slug,
+    sandboxDangerFullAccess: Boolean(state.codexConfig.sandboxDangerFullAccess),
+    approvalNever: Boolean(state.codexConfig.approvalNever),
+    hideFullAccessWarning: Boolean(state.codexConfig.hideFullAccessWarning),
+    search: Boolean(state.codexConfig.search),
+  };
+
+  const response = await fetch("/api/config/codex", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    notify("error", "Changement de modèle impossible.");
+    return;
+  }
+
+  state.codexConfig = await response.json();
+  renderModelTrigger();
+  closeModelModal();
+  notify("success", `Modèle actif: ${state.codexConfig.model}.`);
 }
 
 function scrollConversationTop() {
@@ -693,13 +879,33 @@ function readFileAsDataUrl(file) {
   });
 }
 
-function onSaveConfig(event) {
+async function onSaveConfig(event) {
   event.preventDefault();
   const seconds = clampDuration(elements.notificationDurationInput.value);
+  const payload = {
+    model: state.codexConfig.model,
+    sandboxDangerFullAccess: elements.sandboxDangerInput.checked,
+    approvalNever: elements.approvalNeverInput.checked,
+    hideFullAccessWarning: elements.hideFullAccessWarningInput.checked,
+    search: elements.searchInput.checked,
+  };
+
+  const response = await fetch("/api/config/codex", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    notify("error", "Mise a jour de la configuration Codex impossible.");
+    return;
+  }
+
   state.settings.notificationDurationSeconds = seconds;
+  state.codexConfig = await response.json();
   localStorage.setItem(settingsKey, JSON.stringify(state.settings));
   closeConfigModal();
-  notify("success", `Notifications reglees sur ${seconds}s.`);
+  notify("success", `Configuration enregistree. Notifications a ${seconds}s.`);
 }
 
 function loadSettings() {

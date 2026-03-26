@@ -14,15 +14,23 @@ const DATA_DIR = path.join(ROOT_DIR, "data");
 const STATE_FILE = path.join(DATA_DIR, "state.json");
 const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
 const WORKSPACES_DIR = "/projects";
+const CODEX_CONFIG_FILE = "/root/.codex/config.toml";
+const CODEX_MODELS_CACHE_FILE = "/root/.codex/models_cache.json";
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: "/ws" });
 
 app.use(express.json({ limit: "25mb" }));
-app.use("/assets/bootstrap-icons", express.static(path.join(ROOT_DIR, "node_modules", "bootstrap-icons")));
-app.use("/assets/marked", express.static(path.join(ROOT_DIR, "node_modules", "marked", "lib")));
-app.use(express.static(path.join(ROOT_DIR, "public")));
+app.use("/assets/bootstrap-icons", express.static(path.join(ROOT_DIR, "node_modules", "bootstrap-icons"), {
+  setHeaders: setNoCacheHeaders,
+}));
+app.use("/assets/marked", express.static(path.join(ROOT_DIR, "node_modules", "marked", "lib"), {
+  setHeaders: setNoCacheHeaders,
+}));
+app.use(express.static(path.join(ROOT_DIR, "public"), {
+  setHeaders: setNoCacheHeaders,
+}));
 
 const runtimes = new Map();
 let persistedState = loadState();
@@ -76,6 +84,33 @@ async function boot() {
 function registerRoutes() {
   app.get("/api/bootstrap", (_req, res) => {
     res.json(buildBootstrap());
+  });
+
+  app.get("/api/config/codex", async (_req, res) => {
+    try {
+      res.json(await readCodexConfigSettings());
+    } catch (error) {
+      console.error("Failed to read Codex config:", error);
+      res.status(500).json({ error: error.message || "Failed to read Codex config" });
+    }
+  });
+
+  app.put("/api/config/codex", async (req, res) => {
+    try {
+      const settings = {
+        model: String(req.body?.model || "").trim() || null,
+        sandboxDangerFullAccess: Boolean(req.body?.sandboxDangerFullAccess),
+        approvalNever: Boolean(req.body?.approvalNever),
+        hideFullAccessWarning: Boolean(req.body?.hideFullAccessWarning),
+        search: Boolean(req.body?.search),
+      };
+
+      const updated = await writeCodexConfigSettings(settings);
+      res.json(updated);
+    } catch (error) {
+      console.error("Failed to update Codex config:", error);
+      res.status(500).json({ error: error.message || "Failed to update Codex config" });
+    }
   });
 
   app.post("/api/sessions", async (req, res) => {
@@ -367,13 +402,14 @@ function consumeCodexEvent(session, pendingMessage, line) {
 
 function buildCodexArgs(session, prompt, attachments = []) {
   const imageArgs = attachments.flatMap((attachment) => ["-i", attachment.path]);
+  const prefixArgs = buildCodexPrefixArgs();
   if (session.threadId) {
     return [
+      ...prefixArgs,
       "exec",
       "resume",
       "--json",
       "--skip-git-repo-check",
-      "--dangerously-bypass-approvals-and-sandbox",
       ...imageArgs,
       session.threadId,
       prompt,
@@ -381,15 +417,20 @@ function buildCodexArgs(session, prompt, attachments = []) {
   }
 
   return [
+    ...prefixArgs,
     "exec",
     "--json",
     "--skip-git-repo-check",
-    "--dangerously-bypass-approvals-and-sandbox",
     ...imageArgs,
     "-C",
     session.workspacePath,
     prompt,
   ];
+}
+
+function buildCodexPrefixArgs() {
+  const settings = readCodexConfigSettingsSync();
+  return settings.search ? ["--search"] : [];
 }
 
 async function persistAttachments(sessionId, attachmentsInput) {
@@ -514,6 +555,152 @@ function loadState() {
     console.error("Failed to load state:", error);
     return { sessions: [], lastSessionId: null };
   }
+}
+
+async function readCodexConfigSettings() {
+  const text = await readCodexConfigText();
+  return parseCodexConfigSettings(text);
+}
+
+async function readCodexConfigText() {
+  try {
+    return await fsp.readFile(CODEX_CONFIG_FILE, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return "";
+    }
+    throw error;
+  }
+}
+
+function readCodexConfigSettingsSync() {
+  try {
+    const text = fs.existsSync(CODEX_CONFIG_FILE) ? fs.readFileSync(CODEX_CONFIG_FILE, "utf8") : "";
+    return parseCodexConfigSettings(text);
+  } catch {
+    return parseCodexConfigSettings("");
+  }
+}
+
+function parseCodexConfigSettings(text) {
+  return {
+    model: parseTopLevelTomlString(text, "model") || "gpt-5.4",
+    availableModels: readAvailableModels(),
+    sandboxDangerFullAccess: /^\s*sandbox_mode\s*=\s*"danger-full-access"\s*$/m.test(text),
+    approvalNever: /^\s*approval_policy\s*=\s*"never"\s*$/m.test(text),
+    hideFullAccessWarning: /^\s*hide_full_access_warning\s*=\s*true\s*$/m.test(text),
+    search: /^\s*search\s*=\s*true\s*$/m.test(text),
+  };
+}
+
+async function writeCodexConfigSettings(settings) {
+  let text = await readCodexConfigText();
+
+  text = setOrRemoveTopLevelTomlString(text, "model", settings.model || "gpt-5.4");
+  text = setOrRemoveTopLevelTomlString(text, "sandbox_mode", settings.sandboxDangerFullAccess ? "danger-full-access" : null);
+  text = setOrRemoveTopLevelTomlString(text, "approval_policy", settings.approvalNever ? "never" : null);
+  text = setOrRemoveTopLevelTomlBoolean(text, "search", settings.search);
+  text = setOrRemoveSectionTomlBoolean(text, "notice", "hide_full_access_warning", settings.hideFullAccessWarning);
+  text = `${text.trimEnd()}\n`;
+
+  await fsp.mkdir(path.dirname(CODEX_CONFIG_FILE), { recursive: true });
+  await fsp.writeFile(CODEX_CONFIG_FILE, text, "utf8");
+
+  return parseCodexConfigSettings(text);
+}
+
+function setOrRemoveTopLevelTomlBoolean(text, key, enabled) {
+  const pattern = new RegExp(`^${escapeRegExp(key)}\\s*=\\s*(true|false)\\s*$\\n?`, "m");
+  if (!enabled) {
+    return text.replace(pattern, "");
+  }
+  const line = `${key} = true`;
+  if (pattern.test(text)) {
+    return text.replace(pattern, `${line}\n`);
+  }
+  return `${line}\n${text}`;
+}
+
+function setOrRemoveTopLevelTomlString(text, key, value) {
+  const pattern = new RegExp(`^${escapeRegExp(key)}\\s*=\\s*".*"\\s*$\\n?`, "m");
+  if (value == null) {
+    return text.replace(pattern, "");
+  }
+  const line = `${key} = "${value}"`;
+  if (pattern.test(text)) {
+    return text.replace(pattern, `${line}\n`);
+  }
+  return `${line}\n${text}`;
+}
+
+function parseTopLevelTomlString(text, key) {
+  const match = text.match(new RegExp(`^${escapeRegExp(key)}\\s*=\\s*"([^"]+)"\\s*$`, "m"));
+  return match ? match[1] : "";
+}
+
+function setOrRemoveSectionTomlBoolean(text, sectionName, key, enabled) {
+  const sectionPattern = new RegExp(`(^\\[${escapeRegExp(sectionName)}\\]\\n)([\\s\\S]*?)(?=^\\[[^\\n]+\\]\\n|$)`, "m");
+  const keyPattern = new RegExp(`^${escapeRegExp(key)}\\s*=\\s*(true|false)\\s*$\\n?`, "m");
+
+  if (sectionPattern.test(text)) {
+    return text.replace(sectionPattern, (_match, header, body) => {
+      let nextBody = body;
+
+      if (enabled) {
+        if (keyPattern.test(nextBody)) {
+          nextBody = nextBody.replace(keyPattern, `${key} = true\n`);
+        } else {
+          nextBody = `${key} = true\n${nextBody}`;
+        }
+      } else {
+        nextBody = nextBody.replace(keyPattern, "");
+      }
+
+      nextBody = nextBody.replace(/^\n+/, "");
+      return `${header}${nextBody ? (nextBody.endsWith("\n") ? nextBody : `${nextBody}\n`) : ""}`;
+    });
+  }
+
+  if (!enabled) {
+    return text;
+  }
+
+  const prefix = text.trimEnd();
+  return `${prefix}${prefix ? "\n\n" : ""}[${sectionName}]\n${key} = true\n`;
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function readAvailableModels() {
+  try {
+    if (!fs.existsSync(CODEX_MODELS_CACHE_FILE)) {
+      return [];
+    }
+
+    const raw = JSON.parse(fs.readFileSync(CODEX_MODELS_CACHE_FILE, "utf8"));
+    const models = Array.isArray(raw?.models) ? raw.models : [];
+
+    return models
+      .filter((model) => model?.slug)
+      .filter((model) => model.visibility !== "hidden")
+      .sort((left, right) => Number(left.priority || 999) - Number(right.priority || 999))
+      .map((model) => ({
+        slug: String(model.slug),
+        label: String(model.display_name || model.slug),
+        description: String(model.description || ""),
+      }));
+  } catch (error) {
+    console.error("Failed to read available Codex models:", error);
+    return [];
+  }
+}
+
+function setNoCacheHeaders(res) {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
 }
 
 function syncExternalCodexSessions() {

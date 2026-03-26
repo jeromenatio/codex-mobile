@@ -12,6 +12,10 @@
       <header class="topbar">
         <div class="topbar-copy">
           <p class="eyebrow">Codex Mobile</p>
+          <button id="openModelModal" class="model-trigger" type="button" aria-label="Changer de modèle">
+            <span id="activeModelLabel">gpt-5.4</span>
+            <i class="bi bi-chevron-down" aria-hidden="true"></i>
+          </button>
         </div>
         <div class="topbar-actions">
           <button id="scrollTopButton" class="icon-button plain-button" type="button" aria-label="Aller en haut de la conversation">
@@ -39,7 +43,7 @@
 
       <aside id="sidebar" class="sidebar">
         <section class="card session-list-card">
-          <div class="section-title sidebar-title">
+          <div class="sidebar-header section-title sidebar-title">
             <h2 class="sidebar-heading">
               <i class="bi bi-chat-left-text-fill" aria-hidden="true"></i>
               <span>Sessions</span>
@@ -48,11 +52,11 @@
               <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
             </button>
           </div>
-          <div class="sidebar-stats">
+          <div id="sessionList" class="session-list"></div>
+          <div class="sidebar-footer sidebar-stats">
             <span id="sessionCount" class="pill">0 session</span>
             <span id="workspaceCount" class="pill">0 workspace</span>
           </div>
-          <div id="sessionList" class="session-list"></div>
         </section>
       </aside>
 
@@ -86,22 +90,24 @@
       <section id="createModal" class="modal-layer" aria-hidden="true">
         <div id="modalBackdrop" class="modal-backdrop"></div>
         <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="createModalTitle">
-          <div class="section-title">
+          <div class="modal-header section-title">
             <h2 id="createModalTitle">Nouvelle session</h2>
             <button id="closeCreateModal" class="icon-button plain-button" type="button" aria-label="Fermer">
               <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
             </button>
           </div>
-          <form id="createSessionForm" class="stack">
-            <label class="field">
-              <span>Workspace</span>
-              <input id="workspaceInput" name="workspace" type="text" placeholder="ex: mon-projet" required />
-            </label>
-            <label class="field">
-              <span>Premier message</span>
-              <textarea id="promptInput" name="prompt" rows="4" placeholder="Décris la tâche à lancer."></textarea>
-            </label>
-            <div class="modal-actions">
+          <form id="createSessionForm" class="stack modal-form">
+            <div class="modal-body">
+              <label class="field">
+                <span>Workspace</span>
+                <input id="workspaceInput" name="workspace" type="text" placeholder="ex: mon-projet" required />
+              </label>
+              <label class="field">
+                <span>Premier message</span>
+                <textarea id="promptInput" name="prompt" rows="4" placeholder="Décris la tâche à lancer."></textarea>
+              </label>
+            </div>
+            <div class="modal-actions modal-footer">
               <button id="cancelCreateModal" class="ghost-button" type="button">Annuler</button>
               <button class="primary-button" type="submit">Créer la session</button>
             </div>
@@ -112,18 +118,55 @@
       <section id="configModal" class="modal-layer" aria-hidden="true">
         <div id="configBackdrop" class="modal-backdrop"></div>
         <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="configModalTitle">
-          <div class="section-title">
+          <div class="modal-header section-title">
             <h2 id="configModalTitle">Configuration</h2>
             <button id="closeConfigModal" class="icon-button plain-button" type="button" aria-label="Fermer">
               <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
             </button>
           </div>
-          <form id="configForm" class="stack">
-            <label class="field">
-              <span>Durée des notifications en secondes</span>
-              <input id="notificationDurationInput" name="notificationDuration" type="number" min="1" max="30" step="1" />
-            </label>
-            <div class="modal-actions">
+          <form id="configForm" class="stack modal-form">
+            <div class="modal-body">
+              <label class="field">
+                <span>Durée des notifications en secondes</span>
+                <input id="notificationDurationInput" name="notificationDuration" type="number" min="1" max="30" step="1" />
+              </label>
+              <section class="settings-group">
+                <h3>Accès Codex</h3>
+                <label class="switch-row">
+                  <span class="switch-copy">
+                    <strong>Sandbox full access</strong>
+                    <small>Ajoute `sandbox_mode = "danger-full-access"`.</small>
+                  </span>
+                  <input id="sandboxDangerInput" type="checkbox" />
+                  <span class="switch-ui" aria-hidden="true"></span>
+                </label>
+                <label class="switch-row">
+                  <span class="switch-copy">
+                    <strong>Approval never</strong>
+                    <small>Ajoute `approval_policy = "never"`.</small>
+                  </span>
+                  <input id="approvalNeverInput" type="checkbox" />
+                  <span class="switch-ui" aria-hidden="true"></span>
+                </label>
+                <label class="switch-row">
+                  <span class="switch-copy">
+                    <strong>Masquer l’avertissement</strong>
+                    <small>Ajoute `hide_full_access_warning = true`.</small>
+                  </span>
+                  <input id="hideFullAccessWarningInput" type="checkbox" />
+                  <span class="switch-ui" aria-hidden="true"></span>
+                </label>
+                <label class="switch-row">
+                  <span class="switch-copy">
+                    <strong>Recherche web live</strong>
+                    <small>Ajoute `search = true` et active `--search` au lancement de Codex.</small>
+                  </span>
+                  <input id="searchInput" type="checkbox" />
+                  <span class="switch-ui" aria-hidden="true"></span>
+                </label>
+              </section>
+            </div>
+            <div class="modal-actions modal-footer">
               <button id="cancelConfigModal" class="ghost-button" type="button">Annuler</button>
               <button class="primary-button" type="submit">Enregistrer</button>
             </div>
@@ -131,21 +174,57 @@
         </div>
       </section>
 
+      <section id="modelModal" class="modal-layer" aria-hidden="true">
+        <div id="modelBackdrop" class="modal-backdrop"></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modelModalTitle">
+          <div class="modal-header section-title">
+            <h2 id="modelModalTitle">Choisir un modèle</h2>
+            <button id="closeModelModal" class="icon-button plain-button" type="button" aria-label="Fermer">
+              <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
+            </button>
+          </div>
+          <div class="modal-body">
+            <div id="modelList" class="model-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="confirmModelModal" class="modal-layer" aria-hidden="true">
+        <div id="confirmModelBackdrop" class="modal-backdrop"></div>
+        <div class="modal-card modal-card-sm" role="dialog" aria-modal="true" aria-labelledby="confirmModelModalTitle">
+          <div class="modal-header section-title">
+            <h2 id="confirmModelModalTitle">Changer de modèle</h2>
+            <button id="closeConfirmModelModal" class="icon-button plain-button" type="button" aria-label="Fermer">
+              <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
+            </button>
+          </div>
+          <div class="modal-body">
+            <p id="confirmModelText" class="modal-copy"></p>
+          </div>
+          <div class="modal-actions modal-footer">
+            <button id="cancelConfirmModelModal" class="ghost-button" type="button">Annuler</button>
+            <button id="confirmModelChangeButton" class="primary-button" type="button">Confirmer</button>
+          </div>
+        </div>
+      </section>
+
       <section id="renameModal" class="modal-layer" aria-hidden="true">
         <div id="renameBackdrop" class="modal-backdrop"></div>
         <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="renameModalTitle">
-          <div class="section-title">
+          <div class="modal-header section-title">
             <h2 id="renameModalTitle">Renommer la session</h2>
             <button id="closeRenameModal" class="icon-button plain-button" type="button" aria-label="Fermer">
               <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
             </button>
           </div>
-          <form id="renameSessionForm" class="stack">
-            <label class="field">
-              <span>Nouveau nom</span>
-              <input id="renameSessionInput" name="name" type="text" placeholder="Nom de session" required />
-            </label>
-            <div class="modal-actions">
+          <form id="renameSessionForm" class="stack modal-form">
+            <div class="modal-body">
+              <label class="field">
+                <span>Nouveau nom</span>
+                <input id="renameSessionInput" name="name" type="text" placeholder="Nom de session" required />
+              </label>
+            </div>
+            <div class="modal-actions modal-footer">
               <button id="cancelRenameModal" class="ghost-button" type="button">Annuler</button>
               <button class="primary-button" type="submit">Enregistrer</button>
             </div>
@@ -156,14 +235,16 @@
       <section id="deleteModal" class="modal-layer" aria-hidden="true">
         <div id="deleteBackdrop" class="modal-backdrop"></div>
         <div class="modal-card modal-card-sm" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
-          <div class="section-title">
+          <div class="modal-header section-title">
             <h2 id="deleteModalTitle">Supprimer la session</h2>
             <button id="closeDeleteModal" class="icon-button plain-button" type="button" aria-label="Fermer">
               <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
             </button>
           </div>
-          <p id="deleteModalText" class="modal-copy"></p>
-          <div class="modal-actions">
+          <div class="modal-body">
+            <p id="deleteModalText" class="modal-copy"></p>
+          </div>
+          <div class="modal-actions modal-footer">
             <button id="cancelDeleteModal" class="ghost-button" type="button">Annuler</button>
             <button id="confirmDeleteButton" class="primary-button danger-button" type="button">Supprimer</button>
           </div>

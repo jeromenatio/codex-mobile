@@ -65,12 +65,39 @@ textarea {
   gap: 8px;
 }
 
+.topbar-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
 .eyebrow {
   margin: 0;
   font-size: 0.68rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-soft);
+}
+
+.model-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.model-trigger span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .topbar h1 {
@@ -214,6 +241,14 @@ textarea {
   overflow-x: hidden;
 }
 
+.session-list-card {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
 .section-title,
 .session-row {
   display: flex;
@@ -239,15 +274,33 @@ textarea {
 }
 
 .sidebar-title {
-  align-items: flex-start;
+  align-items: center;
+}
+
+.sidebar-header,
+.sidebar-footer {
+  padding: 10px 14px;
+  background: rgba(255, 249, 241, 0.96);
+}
+
+.sidebar-header {
+  border-bottom: 1px solid rgba(22, 18, 15, 0.08);
+}
+
+.sidebar-footer {
+  border-top: 1px solid rgba(22, 18, 15, 0.08);
 }
 
 .sidebar-stats {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 14px;
   flex-wrap: nowrap;
+}
+
+.sidebar-footer .pill {
+  padding: 5px 9px;
+  font-size: 0.74rem;
 }
 
 .stack,
@@ -296,22 +349,21 @@ textarea {
 }
 
 .session-list {
-  display: grid;
-  gap: 8px;
-  margin-top: 14px;
+  display: block;
+  min-height: 0;
+  padding: 14px 18px;
+  overflow-y: auto;
   overflow-x: hidden;
 }
 
 .session-item {
   width: 100%;
-  min-height: 72px;
-  padding: 10px 10px 10px 14px;
+  padding: 12px 12px 12px 14px;
   background: rgba(255, 255, 255, 0.62);
   border: 1px solid transparent;
   border-radius: 18px;
-  display: grid;
-  gap: 8px;
   overflow: hidden;
+  margin-bottom: 8px;
 }
 
 .session-item.active {
@@ -325,6 +377,10 @@ textarea {
   align-items: center;
   gap: 10px;
   min-width: 0;
+}
+
+.session-head {
+  margin-bottom: 10px;
 }
 
 .session-main {
@@ -361,6 +417,7 @@ textarea {
 }
 
 .session-meta {
+  align-items: center;
   justify-content: space-between;
 }
 
@@ -369,6 +426,7 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1;
 }
 
 .chat-shell {
@@ -382,11 +440,16 @@ textarea {
 
 .messages {
   height: 100%;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: grid;
   gap: 12px;
   align-content: start;
   padding: 8px 0 24px;
+}
+
+.messages > * {
+  min-width: 0;
 }
 
 .empty-chat {
@@ -397,6 +460,8 @@ textarea {
 }
 
 .bubble {
+  width: fit-content;
+  min-width: 0;
   max-width: min(86%, 720px);
   padding: 14px 16px;
   border-radius: 22px;
@@ -428,9 +493,15 @@ textarea {
 }
 
 .bubble-body {
+  min-width: 0;
   line-height: 1.5;
   white-space: normal;
   word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.markdown-body {
+  min-width: 0;
 }
 
 .markdown-body > *:first-child {
@@ -666,21 +737,53 @@ textarea {
   left: 16px;
   right: 16px;
   transform: translateY(-50%);
-  max-height: calc(100vh - 48px);
-  overflow: auto;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: auto;
+  max-height: calc(100vh - 20px);
+  overflow: hidden;
   background: var(--panel);
   border: 1px solid rgba(255, 255, 255, 0.45);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  padding: 18px;
+  padding: 0;
 }
 
 .modal-card-sm {
   max-width: 420px;
 }
 
+.modal-header,
+.modal-footer {
+  padding: 12px 14px;
+  background: rgba(255, 249, 241, 0.96);
+}
+
+.modal-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border-bottom: 1px solid rgba(22, 18, 15, 0.08);
+}
+
+.modal-header h2 {
+  font-size: 0.96rem;
+}
+
+.modal-body {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 14px;
+}
+
+.modal-form {
+  min-height: 0;
+  gap: 0;
+}
+
 .modal-copy {
-  margin: 10px 0 0;
+  margin: 0;
   color: var(--ink-soft);
   line-height: 1.5;
 }
@@ -689,6 +792,132 @@ textarea {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+  flex-wrap: nowrap;
+  border-top: 1px solid rgba(22, 18, 15, 0.08);
+}
+
+.modal-actions .ghost-button,
+.modal-actions .primary-button {
+  flex: 0 0 auto;
+  padding: 10px 14px;
+  border-radius: 14px;
+  line-height: 1.1;
+}
+
+.model-list {
+  display: grid;
+  gap: 10px;
+}
+
+.model-option {
+  width: 100%;
+  border: 1px solid rgba(22, 18, 15, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-option.active {
+  background: rgba(255, 244, 236, 0.98);
+  border-color: rgba(191, 90, 42, 0.34);
+}
+
+.model-option-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.model-option-copy strong,
+.model-option-copy small {
+  display: block;
+}
+
+.model-option-copy small {
+  color: var(--ink-soft);
+  line-height: 1.35;
+}
+
+.settings-group {
+  display: grid;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.settings-group h3 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.switch-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid rgba(22, 18, 15, 0.08);
+  cursor: pointer;
+}
+
+.switch-row input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.switch-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.switch-copy strong,
+.switch-copy small {
+  display: block;
+}
+
+.switch-copy small {
+  color: var(--ink-soft);
+  line-height: 1.35;
+}
+
+.switch-ui {
+  position: relative;
+  width: 46px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(29, 24, 20, 0.16);
+  transition: background 160ms ease;
+}
+
+.switch-ui::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #fffaf4;
+  box-shadow: 0 4px 10px rgba(29, 24, 20, 0.18);
+  transition: transform 160ms ease;
+}
+
+.switch-row input:checked + .switch-ui {
+  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+}
+
+.switch-row input:checked + .switch-ui::after {
+  transform: translateX(18px);
 }
 
 .mobile-only {
@@ -731,6 +960,7 @@ textarea {
     left: 50%;
     right: auto;
     width: min(520px, calc(100vw - 32px));
+    top: 50%;
     transform: translate(-50%, -50%);
   }
 
