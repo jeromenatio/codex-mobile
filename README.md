@@ -59,6 +59,21 @@ L'application écoute par défaut sur :
 http://127.0.0.1:4180
 ```
 
+## Lancer comme service systemd
+
+Depuis le dossier `codex-mobile` :
+
+```bash
+chmod +x service.sh
+sudo ./service.sh
+```
+
+Le script :
+- installe le service `codex-mobile`
+- le démarre immédiatement
+- l'active au démarrage du serveur
+- le redémarre automatiquement en cas de crash ou de reboot
+
 ## Notes
 
 - Par défaut, les workspaces sont créés sous `/projects`.
