@@ -1,0 +1,61 @@
+# Codex Mobile
+
+Interface mobile-first pour créer des sessions Codex, les lier à des workspaces, et discuter avec Codex depuis le navigateur.
+
+## Prérequis
+
+Ubuntu 22.04+ recommandé.
+
+## Installation de Node.js et npm sur Ubuntu
+
+```bash
+sudo apt update
+sudo apt install -y curl ca-certificates gnupg
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs
+node -v
+npm -v
+```
+
+## Installation de Codex CLI
+
+Commande officielle OpenAI :
+
+```bash
+npm install -g @openai/codex
+codex --version
+```
+
+Source :
+- https://help.openai.com/en/articles/11096431-openai-codex-ci-getting-started
+
+## Cloner le repo
+
+```bash
+git clone https://github.com/jeromenatio/codex-mobile.git
+cd codex-mobile
+```
+
+## Installer les dépendances
+
+```bash
+npm install
+```
+
+## Lancer le projet
+
+```bash
+npm start
+```
+
+L'application écoute par défaut sur :
+
+```text
+http://127.0.0.1:4180
+```
+
+## Notes
+
+- Les workspaces sont créés sous `/projects`.
+- Les sessions et l'état local sont persistés côté serveur.
+- Codex CLI doit être installé et configuré sur la machine pour que les sessions Codex fonctionnent.
