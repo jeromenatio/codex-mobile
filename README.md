@@ -2,54 +2,32 @@
 
 Interface mobile-first pour créer des sessions Codex, les lier à des workspaces, et discuter avec Codex depuis le navigateur.
 
-## Prérequis
+## Installation rapide
 
-Ubuntu 22.04+ recommandé.
-
-## Installation Ubuntu
+Commande recommandée sur Ubuntu :
 
 ```bash
-sudo apt update
-sudo apt install -y git curl ca-certificates gnupg
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt install -y nodejs
-git --version
-node -v
-npm -v
+bash <(curl -fsSL https://raw.githubusercontent.com/jeromenatio/codex-mobile/main/install.sh)
 ```
 
-## Installation de Codex CLI
+Le script :
+- installe `git`, `curl`, `node`, `npm` et `codex` si besoin
+- installe aussi `openssl` pour générer le token d'accès
+- clone ou met à jour le repo dans `/projects/codex-mobile`
+- lance `npm install`
+- demande si tu gardes le root workspace par défaut `/projects`
+- crée `/etc/codex-mobile/.env`
+- génère un token `CODEX_MOBILE_AUTH_TOKEN`
+- garde une place pour `GITHUB_TOKEN`
+- lance `codex login` si Codex n'est pas déjà connecté
+- peut installer et démarrer le service systemd
 
-Commande officielle OpenAI :
+## Après installation
 
-```bash
-npm install -g @openai/codex
-codex --version
-codex login
-```
-
-Source :
-- https://help.openai.com/en/articles/11096431-openai-codex-ci-getting-started
-
-Connexion requise :
-- connecte-toi avec `codex login` avant de lancer l'application
-
-## Cloner le repo
+Si tu n'as pas choisi l'installation du service systemd :
 
 ```bash
-git clone https://github.com/jeromenatio/codex-mobile.git
-cd codex-mobile
-```
-
-## Installer les dépendances
-
-```bash
-npm install
-```
-
-## Lancer le projet
-
-```bash
+cd /projects/codex-mobile
 npm start
 ```
 
@@ -74,10 +52,28 @@ Le script :
 - l'active au démarrage du serveur
 - le redémarre automatiquement en cas de crash ou de reboot
 
+## Installation manuelle
+
+Si tu préfères faire l'installation étape par étape :
+
+```bash
+sudo apt update
+sudo apt install -y git curl ca-certificates gnupg openssl
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs
+sudo npm install -g @openai/codex
+codex login
+git clone https://github.com/jeromenatio/codex-mobile.git /projects/codex-mobile
+cd /projects/codex-mobile
+npm install
+npm start
+```
+
 ## Notes
 
 - Par défaut, les workspaces sont créés sous `/projects`.
-- Le dossier racine des workspaces est modifiable depuis l'interface, dans `Configuration`.
+- Le dossier racine des workspaces est modifiable pendant l'installation puis dans `Configuration`.
+- Le fichier `/etc/codex-mobile/.env` est préparé pour le token d'accès et un futur `GITHUB_TOKEN`.
 - La liste des modèles affichée dans l'interface est rafraîchie en live via Codex quand la configuration est chargée.
 - Les sessions et l'état local sont persistés côté serveur.
-- Codex CLI doit être installé et configuré sur la machine pour que les sessions Codex fonctionnent.
+- Codex CLI doit être installé et connecté sur la machine pour que les sessions Codex fonctionnent.
