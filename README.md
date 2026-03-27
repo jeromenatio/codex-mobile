@@ -6,13 +6,14 @@ Interface mobile-first pour créer des sessions Codex, les lier à des workspace
 
 Ubuntu 22.04+ recommandé.
 
-## Installation de Node.js et npm sur Ubuntu
+## Installation Ubuntu
 
 ```bash
 sudo apt update
-sudo apt install -y curl ca-certificates gnupg
+sudo apt install -y git curl ca-certificates gnupg
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt install -y nodejs
+git --version
 node -v
 npm -v
 ```
