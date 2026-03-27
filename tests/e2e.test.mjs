@@ -142,6 +142,7 @@ test("suite e2e exhaustive hors voix", async (t) => {
     await clickDom(page, "#openConfigModal");
     await page.fill("#notificationDurationInput", "9");
     await page.fill("#workspaceRootInput", ALT_WORKSPACE_ROOT);
+    await page.fill("#githubTokenInput", "ghp_ui_token");
     await setCheckbox(page, "#sandboxDangerInput", true);
     await setCheckbox(page, "#approvalNeverInput", true);
     await setCheckbox(page, "#hideFullAccessWarningInput", true);
@@ -158,6 +159,7 @@ test("suite e2e exhaustive hors voix", async (t) => {
     await expectText(page.locator("#sessionList"), "Aucune session.");
 
     await clickDom(page, "#openConfigModal");
+    await expectValue(page.locator("#githubTokenInput"), "ghp_ui_token");
     await page.fill("#workspaceRootInput", WORKSPACE_ROOT);
     await clickDom(page, "#saveConfigButton");
     await openSidebar(page);
@@ -213,6 +215,9 @@ test("suite e2e exhaustive hors voix", async (t) => {
     await activateSessionFromDrawer(page, "alpha-suite");
 
     await clickDom(page, "#openPromptModal");
+    const defaultPrompt = page.locator(".prompt-item").filter({ hasText: "Commit & push" });
+    await expectAttr(defaultPrompt.locator("[data-prompt-action='edit']"), "disabled", "");
+    await expectAttr(defaultPrompt.locator("[data-prompt-action='delete']"), "disabled", "");
     await clickDom(page, "#openPromptEditorButton");
     await page.fill("#promptNameInput", "Résumé");
     await page.fill("#promptTextInput", "Fais un résumé concis.");
@@ -230,7 +235,7 @@ test("suite e2e exhaustive hors voix", async (t) => {
 
     await clickDom(page, "#openPromptModal");
     await clickDom(page.locator(".prompt-item").filter({ hasText: "Résumé" }).locator("[data-prompt-action='delete']"));
-    await expectText(page.locator("#promptList"), "Aucun prompt enregistré.");
+    await expectText(page.locator("#promptList"), "Commit & push");
 
     await context.close();
     });

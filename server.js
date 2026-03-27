@@ -13,6 +13,8 @@ loadEnvFile(process.env.CODEX_MOBILE_ENV_FILE || "/etc/codex-mobile/.env");
 const PORT = Number(process.env.PORT || 4180);
 const ROOT_DIR = __dirname;
 const TEST_MODE = process.env.CODEX_MOBILE_TEST_MODE === "1";
+const FORCE_AUTH = process.env.CODEX_MOBILE_FORCE_AUTH === "1";
+const DISABLE_EXTERNAL_SYNC = TEST_MODE || process.env.CODEX_MOBILE_DISABLE_EXTERNAL_SYNC === "1";
 const DATA_DIR = process.env.CODEX_MOBILE_DATA_DIR || path.join(ROOT_DIR, "data");
 const STATE_FILE = path.join(DATA_DIR, "state.json");
 const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
@@ -21,7 +23,7 @@ const CODEX_CONFIG_FILE = process.env.CODEX_MOBILE_CONFIG_FILE || "/root/.codex/
 const CODEX_MODELS_CACHE_FILE = process.env.CODEX_MOBILE_MODELS_CACHE_FILE || "/root/.codex/models_cache.json";
 const CODEX_MOBILE_ENV_FILE = process.env.CODEX_MOBILE_ENV_FILE || "/etc/codex-mobile/.env";
 const AUTH_TOKEN = String(process.env.CODEX_MOBILE_AUTH_TOKEN || "").trim();
-const AUTH_ENABLED = !TEST_MODE && Boolean(AUTH_TOKEN);
+const AUTH_ENABLED = (FORCE_AUTH || !TEST_MODE) && Boolean(AUTH_TOKEN);
 const AUTH_COOKIE_NAME = "codex_mobile_auth";
 const AUTH_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 
@@ -82,7 +84,7 @@ async function boot() {
     await saveState();
   }
 
-  if (!TEST_MODE) {
+  if (!DISABLE_EXTERNAL_SYNC) {
     syncExternalCodexSessions();
   }
 
