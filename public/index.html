@@ -147,12 +147,18 @@
                 <span class="switch-copy">
                   <strong>Thème</strong>
                 </span>
+                <input id="themeValueInput" type="hidden" value="sandstone" />
                 <select id="themeSelect" class="setting-input setting-select" name="theme">
                   <option value="sandstone">Sandstone</option>
                   <option value="ivory-forest">Ivory Forest</option>
                   <option value="ocean-paper">Ocean Paper</option>
                   <option value="ember-night">Ember Night</option>
                   <option value="rose-studio">Rose Studio</option>
+                  <option value="midnight-cyan">Midnight Cyan</option>
+                  <option value="citrus-lab">Citrus Lab</option>
+                  <option value="plum-ink">Plum Ink</option>
+                  <option value="arctic-glass">Arctic Glass</option>
+                  <option value="terracotta-dusk">Terracotta Dusk</option>
                 </select>
               </label>
               <label class="setting-row">
@@ -202,7 +208,7 @@
             </div>
             <div class="modal-actions modal-footer">
               <button id="cancelConfigModal" class="ghost-button" type="button">Annuler</button>
-              <button class="primary-button" type="submit">Enregistrer</button>
+              <button id="saveConfigButton" class="primary-button" type="submit">Enregistrer</button>
             </div>
           </form>
         </div>

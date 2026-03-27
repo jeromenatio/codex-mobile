@@ -2,7 +2,18 @@ import { marked } from "/assets/marked/marked.esm.js";
 
 const storageKey = "codex-mobile:last-session";
 const settingsKey = "codex-mobile:settings";
-const themes = ["sandstone", "ivory-forest", "ocean-paper", "ember-night", "rose-studio"];
+const themes = [
+  "sandstone",
+  "ivory-forest",
+  "ocean-paper",
+  "ember-night",
+  "rose-studio",
+  "midnight-cyan",
+  "citrus-lab",
+  "plum-ink",
+  "arctic-glass",
+  "terracotta-dusk",
+];
 
 marked.setOptions({
   breaks: true,
@@ -57,11 +68,13 @@ const elements = {
   scrollTopButton: document.getElementById("scrollTopButton"),
   scrollBottomButton: document.getElementById("scrollBottomButton"),
   closeConfigModal: document.getElementById("closeConfigModal"),
+  saveConfigButton: document.getElementById("saveConfigButton"),
   cancelConfigModal: document.getElementById("cancelConfigModal"),
   configModal: document.getElementById("configModal"),
   configBackdrop: document.getElementById("configBackdrop"),
   configForm: document.getElementById("configForm"),
   themeSelect: document.getElementById("themeSelect"),
+  themeValueInput: document.getElementById("themeValueInput"),
   notificationDurationInput: document.getElementById("notificationDurationInput"),
   workspaceRootInput: document.getElementById("workspaceRootInput"),
   sandboxDangerInput: document.getElementById("sandboxDangerInput"),
@@ -222,6 +235,9 @@ function bindEvents() {
   elements.cancelConfigModal.addEventListener("click", closeConfigModal);
   elements.configBackdrop.addEventListener("click", closeConfigModal);
   elements.configForm.addEventListener("submit", onSaveConfig);
+  elements.themeSelect.addEventListener("change", onThemeSelectionChange);
+  elements.saveConfigButton.addEventListener("pointerdown", syncThemeSelectionValue);
+  elements.saveConfigButton.addEventListener("click", syncThemeSelectionValue);
   elements.closeRenameModal.addEventListener("click", closeRenameModal);
   elements.cancelRenameModal.addEventListener("click", closeRenameModal);
   elements.renameBackdrop.addEventListener("click", closeRenameModal);
@@ -704,6 +720,7 @@ async function openConfigModal() {
     return;
   }
   elements.themeSelect.value = state.settings.theme;
+  elements.themeValueInput.value = state.settings.theme;
   elements.notificationDurationInput.value = String(state.settings.notificationDurationSeconds);
   elements.workspaceRootInput.value = state.appConfig.workspaceRoot || "/projects";
   elements.sandboxDangerInput.checked = Boolean(state.codexConfig.sandboxDangerFullAccess);
@@ -717,6 +734,18 @@ async function openConfigModal() {
 function closeConfigModal() {
   elements.configModal.classList.remove("open");
   elements.configModal.setAttribute("aria-hidden", "true");
+}
+
+function onThemeSelectionChange(event) {
+  const theme = normalizeTheme(event.target.value);
+  elements.themeValueInput.value = theme;
+  state.settings.theme = theme;
+  persistSettings();
+  applyTheme(theme);
+}
+
+function syncThemeSelectionValue() {
+  elements.themeValueInput.value = normalizeTheme(elements.themeSelect.value);
 }
 
 async function openModelModal() {
@@ -1567,7 +1596,7 @@ function readFileAsDataUrl(file) {
 
 async function onSaveConfig(event) {
   event.preventDefault();
-  const theme = normalizeTheme(elements.themeSelect.value);
+  const theme = normalizeTheme(state.settings.theme || elements.themeValueInput.value || elements.themeSelect.value);
   const seconds = clampDuration(elements.notificationDurationInput.value);
   const workspaceRoot = String(elements.workspaceRootInput.value || "").trim() || "/projects";
   const payload = {
