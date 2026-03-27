@@ -242,6 +242,27 @@ function registerRoutes() {
       res.status(500).json({ error: error.message || "Failed to send message" });
     }
   });
+
+  app.post("/api/sessions/:sessionId/interrupt", async (req, res) => {
+    try {
+      const session = findSession(req.params.sessionId);
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+
+      const runtime = runtimes.get(session.id);
+      if (!runtime?.process) {
+        return res.status(409).json({ error: "No running turn for this session" });
+      }
+
+      runtime.interruptRequested = true;
+      runtime.process.kill("SIGTERM");
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Failed to interrupt session:", error);
+      res.status(500).json({ error: error.message || "Failed to interrupt session" });
+    }
+  });
 }
 
 function registerWebsocket() {
@@ -342,6 +363,7 @@ function runSessionTurn(session, prompt, attachments = []) {
 
   const runtime = ensureRuntimeShell(session.id);
   runtime.process = child;
+  runtime.interruptRequested = false;
 
   const pendingMessage = {
     id: crypto.randomUUID(),
@@ -374,16 +396,20 @@ function runSessionTurn(session, prompt, attachments = []) {
 
   child.on("exit", async (code) => {
     runtime.process = null;
+    const interrupted = Boolean(runtime.interruptRequested);
+    runtime.interruptRequested = false;
 
     if (!pendingMessage.text.trim()) {
       pendingMessage.text =
-        code === 0
+        interrupted
+          ? "Réponse interrompue."
+          : code === 0
           ? "Réponse vide."
           : `La session Codex a échoué${runtime.stderr.length ? `: ${runtime.stderr.join(" ")}` : "."}`;
     }
 
     pendingMessage.pending = false;
-    session.status = code === 0 ? "idle" : "error";
+    session.status = interrupted ? "idle" : code === 0 ? "idle" : "error";
     session.updatedAt = new Date().toISOString();
 
     broadcastToSession(session.id, {
@@ -565,6 +591,7 @@ function ensureRuntimeShell(sessionId) {
       clients: new Set(),
       process: null,
       stderr: [],
+      interruptRequested: false,
     });
   }
   return runtimes.get(sessionId);
@@ -594,7 +621,8 @@ function loadState() {
 
 async function readCodexConfigSettings() {
   const text = await readCodexConfigText();
-  return parseCodexConfigSettings(text);
+  const availableModels = await readAvailableModelsLive();
+  return parseCodexConfigSettings(text, availableModels);
 }
 
 async function readCodexConfigText() {
@@ -611,16 +639,16 @@ async function readCodexConfigText() {
 function readCodexConfigSettingsSync() {
   try {
     const text = fs.existsSync(CODEX_CONFIG_FILE) ? fs.readFileSync(CODEX_CONFIG_FILE, "utf8") : "";
-    return parseCodexConfigSettings(text);
+    return parseCodexConfigSettings(text, readAvailableModels());
   } catch {
-    return parseCodexConfigSettings("");
+    return parseCodexConfigSettings("", readAvailableModels());
   }
 }
 
-function parseCodexConfigSettings(text) {
+function parseCodexConfigSettings(text, availableModels = readAvailableModels()) {
   return {
     model: parseTopLevelTomlString(text, "model") || "gpt-5.4",
-    availableModels: readAvailableModels(),
+    availableModels,
     sandboxDangerFullAccess: /^\s*sandbox_mode\s*=\s*"danger-full-access"\s*$/m.test(text),
     approvalNever: /^\s*approval_policy\s*=\s*"never"\s*$/m.test(text),
     hideFullAccessWarning: /^\s*hide_full_access_warning\s*=\s*true\s*$/m.test(text),
@@ -641,7 +669,8 @@ async function writeCodexConfigSettings(settings) {
   await fsp.mkdir(path.dirname(CODEX_CONFIG_FILE), { recursive: true });
   await fsp.writeFile(CODEX_CONFIG_FILE, text, "utf8");
 
-  return parseCodexConfigSettings(text);
+  const availableModels = await readAvailableModelsLive();
+  return parseCodexConfigSettings(text, availableModels);
 }
 
 function setOrRemoveTopLevelTomlBoolean(text, key, enabled) {
@@ -730,6 +759,145 @@ function readAvailableModels() {
     console.error("Failed to read available Codex models:", error);
     return [];
   }
+}
+
+async function readAvailableModelsLive() {
+  try {
+    const models = await requestCodexAppServerModels();
+    return models.length ? models : readAvailableModels();
+  } catch (error) {
+    console.error("Failed to refresh available Codex models:", error);
+    return readAvailableModels();
+  }
+}
+
+async function requestCodexAppServerModels() {
+  return new Promise((resolve, reject) => {
+    const child = spawn("codex", ["app-server", "--listen", "stdio://"], {
+      cwd: ROOT_DIR,
+      env: process.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stdoutBuffer = "";
+    let stderrBuffer = "";
+    let settled = false;
+    let requestId = 0;
+    const pending = new Map();
+
+    const finish = (callback) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      child.kill("SIGTERM");
+      callback();
+    };
+
+    const sendRequest = (method, params) =>
+      new Promise((resolveRequest, rejectRequest) => {
+        requestId += 1;
+        pending.set(requestId, { resolve: resolveRequest, reject: rejectRequest });
+        child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: requestId, method, params }) + "\n");
+      });
+
+    const rejectPending = (error) => {
+      for (const pendingRequest of pending.values()) {
+        pendingRequest.reject(error);
+      }
+      pending.clear();
+    };
+
+    const timeoutId = setTimeout(() => {
+      const error = new Error("Codex app-server model refresh timed out");
+      finish(() => reject(error));
+      rejectPending(error);
+    }, 12000);
+
+    child.stdout.on("data", (chunk) => {
+      stdoutBuffer += chunk.toString();
+      while (true) {
+        const lineBreakIndex = stdoutBuffer.indexOf("\n");
+        if (lineBreakIndex === -1) {
+          break;
+        }
+
+        const line = stdoutBuffer.slice(0, lineBreakIndex).trim();
+        stdoutBuffer = stdoutBuffer.slice(lineBreakIndex + 1);
+        if (!line) {
+          continue;
+        }
+
+        let message;
+        try {
+          message = JSON.parse(line);
+        } catch {
+          continue;
+        }
+
+        if (message.id == null || !pending.has(message.id)) {
+          continue;
+        }
+
+        const pendingRequest = pending.get(message.id);
+        pending.delete(message.id);
+        if (message.error) {
+          pendingRequest.reject(new Error(message.error.message || "Codex app-server request failed"));
+        } else {
+          pendingRequest.resolve(message.result);
+        }
+      }
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderrBuffer += chunk.toString();
+    });
+
+    child.on("error", (error) => {
+      finish(() => reject(error));
+      rejectPending(error);
+    });
+
+    child.on("exit", (code) => {
+      if (!settled && code !== 0) {
+        const error = new Error(stderrBuffer.trim() || `Codex app-server exited with code ${code}`);
+        finish(() => reject(error));
+        rejectPending(error);
+      }
+    });
+
+    (async () => {
+      try {
+        await sendRequest("initialize", {
+          clientInfo: {
+            name: "codex-mobile",
+            version: "1.0.0",
+          },
+          capabilities: {},
+        });
+
+        const response = await sendRequest("model/list", {
+          includeHidden: false,
+          limit: 200,
+        });
+
+        const models = Array.isArray(response?.data) ? response.data : [];
+        finish(() =>
+          resolve(
+            models.map((model) => ({
+              slug: String(model.model || model.id || ""),
+              label: String(model.displayName || model.model || model.id || ""),
+              description: String(model.description || ""),
+            })).filter((model) => model.slug)
+          )
+        );
+      } catch (error) {
+        finish(() => reject(error));
+        rejectPending(error);
+      }
+    })();
+  });
 }
 
 function setNoCacheHeaders(res) {

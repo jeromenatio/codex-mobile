@@ -147,6 +147,7 @@ const elements = {
   sttLevelMeter: document.getElementById("sttLevelMeter"),
   messages: document.getElementById("messages"),
   sendButton: document.getElementById("sendButton"),
+  sendButtonIcon: document.getElementById("sendButtonIcon"),
   notifications: document.getElementById("notifications"),
 };
 
@@ -498,9 +499,25 @@ async function onCreateSession(event) {
 
 async function onSendMessage(event) {
   event.preventDefault();
+  const session = getActiveSession();
   const text = elements.messageInput.value.trim();
   if (!state.activeSessionId) {
     notify("warning", "Selectionne d'abord une session.");
+    return;
+  }
+  if (session?.status === "running") {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/interrupt`, {
+      method: "POST",
+    });
+    if (response.status === 409) {
+      notify("info", "Aucune reponse en cours.");
+      return;
+    }
+    if (!response.ok) {
+      notify("error", "Interruption impossible.");
+      return;
+    }
+    notify("success", "Reponse interrompue.");
     return;
   }
   if (!text && state.pendingAttachments.length === 0) {
@@ -579,9 +596,22 @@ function updateHeader(session) {
   elements.pickImagesButton.disabled = status === "running";
   elements.clearComposerButton.disabled = status === "running";
   elements.openSttModal.disabled = status === "running";
-  elements.sendButton.disabled = status === "running";
+  elements.sendButton.disabled = !session;
+  renderSendButton(session);
   renderComposerStatus(session);
   elements.composerStatus.className = `composer-status badge-status ${status === "idle" ? "idle" : "live"}`;
+}
+
+function renderSendButton(session) {
+  const running = session?.status === "running";
+  elements.sendButton.setAttribute("aria-label", running ? "Interrompre" : "Envoyer");
+  elements.sendButton.title = running ? "Interrompre Codex" : "Envoyer";
+  elements.sendButton.classList.toggle("stop-mode", running);
+  elements.sendButtonIcon.className = running ? "bi bi-stop-fill send-icon" : "bi bi-send-fill send-icon";
+}
+
+function getActiveSession() {
+  return state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null;
 }
 
 function pickSessionId() {
@@ -609,7 +639,7 @@ function setBusy(isBusy) {
   elements.pickImagesButton.disabled = isBusy;
   elements.clearComposerButton.disabled = isBusy;
   elements.openSttModal.disabled = isBusy;
-  elements.sendButton.disabled = isBusy;
+  elements.sendButton.disabled = isBusy || !state.activeSessionId;
 }
 
 function autoResizeMessageInput() {

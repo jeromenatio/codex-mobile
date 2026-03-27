@@ -87,7 +87,7 @@
                 <i class="bi bi-mic-fill icon-glyph" aria-hidden="true"></i>
               </button>
               <button id="sendButton" class="primary-button send-button" type="submit" aria-label="Envoyer">
-                <i class="bi bi-send-fill send-icon" aria-hidden="true"></i>
+                <i id="sendButtonIcon" class="bi bi-send-fill send-icon" aria-hidden="true"></i>
               </button>
             </div>
           </div>
@@ -155,11 +155,11 @@
                 </span>
                 <input id="notificationDurationInput" class="setting-input" name="notificationDuration" type="number" min="1" max="30" step="1" />
               </label>
-              <label class="setting-row">
+              <label class="setting-row setting-row-wide">
                 <span class="switch-copy">
                   <strong>Dossier racine</strong>
                 </span>
-                <input id="workspaceRootInput" class="setting-input" name="workspaceRoot" type="text" placeholder="/projects" />
+                <input id="workspaceRootInput" class="setting-input setting-input-wide" name="workspaceRoot" type="text" placeholder="/projects" />
               </label>
               </section>
               <section class="settings-group">

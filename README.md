@@ -63,5 +63,6 @@ http://127.0.0.1:4180
 
 - Par défaut, les workspaces sont créés sous `/projects`.
 - Le dossier racine des workspaces est modifiable depuis l'interface, dans `Configuration`.
+- La liste des modèles affichée dans l'interface est rafraîchie en live via Codex quand la configuration est chargée.
 - Les sessions et l'état local sont persistés côté serveur.
 - Codex CLI doit être installé et configuré sur la machine pour que les sessions Codex fonctionnent.

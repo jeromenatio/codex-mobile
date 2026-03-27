@@ -825,6 +825,10 @@ textarea {
   border-radius: 999px;
 }
 
+.send-button.stop-mode {
+  background: #d96a4b;
+}
+
 .topbar .icon-glyph,
 .modal-card .icon-glyph {
   font-size: 1.2rem;
@@ -935,7 +939,7 @@ textarea {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   height: auto;
-  max-height: calc(100vh - 20px);
+  max-height: calc(100dvh - 20px);
   overflow: hidden;
   background: var(--panel);
   border: 1px solid rgba(255, 255, 255, 0.45);
@@ -1131,10 +1135,6 @@ textarea {
   white-space: pre-wrap;
 }
 
-#imageModal .modal-card {
-  max-height: calc(100dvh - 20px);
-}
-
 .image-card {
   overflow: hidden;
   border-radius: 18px;
@@ -1284,6 +1284,10 @@ textarea {
   cursor: default;
 }
 
+.setting-row-wide {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
 .switch-row input {
   position: absolute;
   opacity: 0;
@@ -1298,6 +1302,12 @@ textarea {
   background: rgba(255, 255, 255, 0.92);
   color: var(--ink);
   text-align: center;
+}
+
+.setting-input-wide {
+  width: 100%;
+  min-width: 0;
+  text-align: left;
 }
 
 .setting-select {
