@@ -89,13 +89,13 @@ test("suite e2e exhaustive hors voix", async (t) => {
 
     await page.fill("#messageInput", "__SLOW__");
     await clickDom(page, "#sendButton");
-    await expectAttr(page.locator("#sendButton"), "aria-label", "Interrompre");
     await expectText(page.locator(".bubble.assistant.pending").last(), "Codex réfléchit");
+    await expectAttr(page.locator("#sendButton"), "aria-label", "Interrompre");
 
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.locator("#messageInput").waitFor({ state: "visible" });
-    await expectAttr(page.locator("#sendButton"), "aria-label", "Interrompre");
     await expectText(page.locator(".bubble.assistant.pending").last(), "Codex réfléchit");
+    await expectAttr(page.locator("#sendButton"), "aria-label", "Interrompre");
 
     await clickDom(page, "#sendButton");
     await expectAttr(page.locator("#sendButton"), "aria-label", "Envoyer");
