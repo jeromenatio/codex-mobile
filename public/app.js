@@ -33,6 +33,7 @@ const state = {
   pendingDeleteSessionId: null,
   pendingModelSlug: null,
   editingPromptId: null,
+  sessionSearchTerm: "",
   stt: {
     transcript: "",
     interim: "",
@@ -125,6 +126,7 @@ const elements = {
   workspaceInput: document.getElementById("workspaceInput"),
   promptInput: document.getElementById("promptInput"),
   sessionList: document.getElementById("sessionList"),
+  sessionSearchInput: document.getElementById("sessionSearchInput"),
   sessionCount: document.getElementById("sessionCount"),
   workspaceCount: document.getElementById("workspaceCount"),
   activeMessageCount: document.getElementById("activeMessageCount"),
@@ -236,6 +238,7 @@ function bindEvents() {
   elements.closeSidebar?.addEventListener("click", closeSidebar);
   elements.createSessionForm.addEventListener("submit", onCreateSession);
   elements.messageForm.addEventListener("submit", onSendMessage);
+  elements.sessionSearchInput.addEventListener("input", onSessionSearch);
   elements.pickImagesButton.addEventListener("click", openImageModal);
   elements.clearComposerButton.addEventListener("click", clearComposer);
   elements.imageInput.addEventListener("change", onPickImages);
@@ -319,17 +322,24 @@ function renderModelList() {
 
 function renderSessionList() {
   const sessions = state.bootstrap?.sessions || [];
-  const workspaces = state.bootstrap?.workspaces || [];
+  const query = state.sessionSearchTerm.trim().toLocaleLowerCase("fr");
+  const filteredSessions = query
+    ? sessions.filter((session) => {
+        const haystack = `${session.name} ${session.workspaceName}`.toLocaleLowerCase("fr");
+        return haystack.includes(query);
+      })
+    : sessions;
+  const workspaces = [...new Set(filteredSessions.map((session) => session.workspaceName))];
 
-  elements.sessionCount.textContent = `${sessions.length} session${sessions.length > 1 ? "s" : ""}`;
+  elements.sessionCount.textContent = `${filteredSessions.length} session${filteredSessions.length > 1 ? "s" : ""}`;
   elements.workspaceCount.textContent = `${workspaces.length} workspace${workspaces.length > 1 ? "s" : ""}`;
 
-  if (!sessions.length) {
-    elements.sessionList.innerHTML = `<p class="empty-state">Aucune session.</p>`;
+  if (!filteredSessions.length) {
+    elements.sessionList.innerHTML = `<p class="empty-state">${sessions.length ? "Aucun résultat." : "Aucune session."}</p>`;
     return;
   }
 
-  elements.sessionList.innerHTML = sessions
+  elements.sessionList.innerHTML = filteredSessions
     .map((session) => {
       const active = session.id === state.activeSessionId ? "active" : "";
       const statusLabel = session.status === "running" ? "En cours" : session.status;
@@ -392,6 +402,11 @@ function renderSessionList() {
       openDeleteModal(session);
     });
   }
+}
+
+function onSessionSearch(event) {
+  state.sessionSearchTerm = String(event.target.value || "");
+  renderSessionList();
 }
 
 async function activateSession(sessionId) {

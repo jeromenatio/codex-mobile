@@ -397,6 +397,10 @@ textarea {
   align-items: center;
 }
 
+.sidebar-header-top {
+  margin-bottom: 8px;
+}
+
 .sidebar-header,
 .sidebar-footer {
   padding: 10px 14px;
@@ -416,6 +420,38 @@ textarea {
   align-items: center;
   gap: 8px;
   flex-wrap: nowrap;
+}
+
+.session-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(22, 18, 15, 0.08);
+}
+
+.session-search i {
+  flex: 0 0 auto;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.session-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+}
+
+.session-search input::placeholder {
+  color: var(--ink-soft);
 }
 
 .sidebar-footer .pill {

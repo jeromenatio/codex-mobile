@@ -46,14 +46,20 @@
 
       <aside id="sidebar" class="sidebar">
         <section class="card session-list-card">
-          <div class="sidebar-header section-title sidebar-title">
-            <h2 class="sidebar-heading">
-              <i class="bi bi-chat-left-text-fill" aria-hidden="true"></i>
-              <span>Sessions</span>
-            </h2>
-            <button id="closeSidebar" class="icon-button plain-button mobile-only" type="button" aria-label="Fermer le panneau">
-              <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
-            </button>
+          <div class="sidebar-header">
+            <div class="section-title sidebar-title sidebar-header-top">
+              <h2 class="sidebar-heading">
+                <i class="bi bi-chat-left-text-fill" aria-hidden="true"></i>
+                <span>Sessions</span>
+              </h2>
+              <button id="closeSidebar" class="icon-button plain-button mobile-only" type="button" aria-label="Fermer le panneau">
+                <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
+              </button>
+            </div>
+            <label class="session-search" aria-label="Rechercher une session">
+              <i class="bi bi-search" aria-hidden="true"></i>
+              <input id="sessionSearchInput" type="search" placeholder="Rechercher session ou workspace" autocomplete="off" />
+            </label>
           </div>
           <div id="sessionList" class="session-list"></div>
           <div class="sidebar-footer sidebar-stats">
