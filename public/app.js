@@ -25,6 +25,11 @@ const state = {
   activeSessionId: null,
   socket: null,
   messages: [],
+  auth: {
+    enabled: false,
+    authenticated: false,
+    bootstrapped: false,
+  },
   settings: loadSettings(),
   appConfig: {
     workspaceRoot: "/projects",
@@ -62,8 +67,14 @@ const state = {
 };
 
 const elements = {
+  authGate: document.getElementById("authGate"),
+  authForm: document.getElementById("authForm"),
+  authTokenInput: document.getElementById("authTokenInput"),
+  authHint: document.getElementById("authHint"),
+  authSubmitButton: document.getElementById("authSubmitButton"),
   openModelModal: document.getElementById("openModelModal"),
   activeModelLabel: document.getElementById("activeModelLabel"),
+  logoutButton: document.getElementById("logoutButton"),
   openConfigModal: document.getElementById("openConfigModal"),
   scrollTopButton: document.getElementById("scrollTopButton"),
   scrollBottomButton: document.getElementById("scrollBottomButton"),
@@ -171,6 +182,13 @@ bootstrap();
 async function bootstrap() {
   bindEvents();
   applyTheme(state.settings.theme);
+  if (!(await ensureAuthenticated())) {
+    return;
+  }
+  await bootstrapApp();
+}
+
+async function bootstrapApp() {
   try {
     await refreshCodexConfig();
   } catch (error) {
@@ -192,7 +210,11 @@ async function bootstrap() {
 }
 
 function bindEvents() {
+  elements.authForm.addEventListener("submit", onSubmitAuth);
   elements.openModelModal.addEventListener("click", openModelModal);
+  elements.logoutButton.addEventListener("click", () => {
+    void logout();
+  });
   elements.openPromptModal.addEventListener("click", openPromptModal);
   elements.closePromptModal.addEventListener("click", closePromptModal);
   elements.closePromptFooterButton.addEventListener("click", closePromptModal);
@@ -282,14 +304,110 @@ function bindEvents() {
   });
 }
 
+async function apiFetch(url, options = {}) {
+  const response = await fetch(url, options);
+  if (response.status === 401) {
+    handleUnauthorized();
+  }
+  return response;
+}
+
+function handleUnauthorized() {
+  disconnectSocket();
+  state.auth.authenticated = false;
+  state.activeSessionId = null;
+  state.messages = [];
+  openAuthGate("Session expiree. Reconnecte-toi.");
+}
+
+async function ensureAuthenticated() {
+  try {
+    const response = await fetch("/api/auth/status");
+    if (!response.ok) {
+      throw new Error("Auth status failed");
+    }
+    const payload = await response.json();
+    state.auth.enabled = Boolean(payload.enabled);
+    state.auth.authenticated = Boolean(payload.authenticated);
+    state.auth.bootstrapped = true;
+
+    if (!state.auth.enabled || state.auth.authenticated) {
+      closeAuthGate();
+      return true;
+    }
+
+    openAuthGate();
+    return false;
+  } catch {
+    openAuthGate("Impossible de verifier l'acces. Reessaie.");
+    return false;
+  }
+}
+
+function openAuthGate(message = "Saisis le token d'accès pour ouvrir l'interface.") {
+  document.body.classList.add("auth-locked");
+  elements.authGate.classList.add("open");
+  elements.authGate.setAttribute("aria-hidden", "false");
+  elements.authHint.textContent = message;
+  window.setTimeout(() => {
+    elements.authTokenInput.focus();
+  }, 0);
+}
+
+function closeAuthGate() {
+  document.body.classList.remove("auth-locked");
+  elements.authGate.classList.remove("open");
+  elements.authGate.setAttribute("aria-hidden", "true");
+  elements.authTokenInput.value = "";
+}
+
+async function onSubmitAuth(event) {
+  event.preventDefault();
+  const token = elements.authTokenInput.value.trim();
+  if (!token) {
+    elements.authHint.textContent = "Le token est requis.";
+    return;
+  }
+
+  elements.authSubmitButton.disabled = true;
+  const response = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  }).catch(() => null);
+  elements.authSubmitButton.disabled = false;
+
+  if (!response?.ok) {
+    elements.authHint.textContent = "Token invalide.";
+    return;
+  }
+
+  state.auth.authenticated = true;
+  closeAuthGate();
+  try {
+    await bootstrapApp();
+    notify("success", "Connexion reussie.");
+  } catch {
+    openAuthGate("Connexion etablie, mais chargement impossible.");
+  }
+}
+
+async function logout() {
+  try {
+    await fetch("/api/auth/logout", { method: "POST" });
+  } catch {}
+  handleUnauthorized();
+  notify("success", "Déconnecté.");
+}
+
 async function refreshBootstrap() {
-  const response = await fetch("/api/bootstrap");
+  const response = await apiFetch("/api/bootstrap");
   state.bootstrap = await response.json();
   renderSessionList();
 }
 
 async function refreshCodexConfig() {
-  const response = await fetch("/api/config/codex");
+  const response = await apiFetch("/api/config/codex");
   if (!response.ok) {
     throw new Error("Impossible de charger la configuration Codex.");
   }
@@ -298,7 +416,7 @@ async function refreshCodexConfig() {
 }
 
 async function refreshAppConfig() {
-  const response = await fetch("/api/config/app");
+  const response = await apiFetch("/api/config/app");
   if (!response.ok) {
     throw new Error("Impossible de charger la configuration application.");
   }
@@ -507,7 +625,7 @@ async function onCreateSession(event) {
   }
 
   setBusy(true);
-  const response = await fetch("/api/sessions", {
+  const response = await apiFetch("/api/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ workspace, prompt }),
@@ -537,7 +655,7 @@ async function onSendMessage(event) {
     return;
   }
   if (session?.status === "running") {
-    const response = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/interrupt`, {
+    const response = await apiFetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/interrupt`, {
       method: "POST",
     });
     if (response.status === 409) {
@@ -558,7 +676,7 @@ async function onSendMessage(event) {
   const attachments = [...state.pendingAttachments];
   clearComposer();
 
-  const response = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/message`, {
+  const response = await apiFetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, attachments }),
@@ -1341,7 +1459,7 @@ async function applyModelChange(slug) {
     search: Boolean(state.codexConfig.search),
   };
 
-  const response = await fetch("/api/config/codex", {
+  const response = await apiFetch("/api/config/codex", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -1377,7 +1495,7 @@ async function onRenameSession(event) {
     return;
   }
 
-  const response = await fetch(`/api/sessions/${encodeURIComponent(state.pendingRenameSessionId)}`, {
+  const response = await apiFetch(`/api/sessions/${encodeURIComponent(state.pendingRenameSessionId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: nextName }),
@@ -1406,7 +1524,7 @@ async function onDeleteSession() {
     return;
   }
 
-  const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+  const response = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
     method: "DELETE",
   });
 
@@ -1607,7 +1725,7 @@ async function onSaveConfig(event) {
     search: elements.searchInput.checked,
   };
 
-  const appResponse = await fetch("/api/config/app", {
+  const appResponse = await apiFetch("/api/config/app", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ workspaceRoot }),
@@ -1618,7 +1736,7 @@ async function onSaveConfig(event) {
     return;
   }
 
-  const codexResponse = await fetch("/api/config/codex", {
+  const codexResponse = await apiFetch("/api/config/codex", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),

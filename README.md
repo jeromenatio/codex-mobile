@@ -37,6 +37,12 @@ L'application écoute par défaut sur :
 http://127.0.0.1:4180
 ```
 
+Au premier accès web, l'interface demande le token contenu dans :
+
+```bash
+sudo sed -n 's/^CODEX_MOBILE_AUTH_TOKEN=//p' /etc/codex-mobile/.env
+```
+
 ## Lancer comme service systemd
 
 Depuis le dossier `codex-mobile` :
@@ -74,6 +80,7 @@ npm start
 - Par défaut, les workspaces sont créés sous `/projects`.
 - Le dossier racine des workspaces est modifiable pendant l'installation puis dans `Configuration`.
 - Le fichier `/etc/codex-mobile/.env` est préparé pour le token d'accès et un futur `GITHUB_TOKEN`.
+- L'API et le WebSocket sont protégés par session cookie quand `CODEX_MOBILE_AUTH_TOKEN` est présent.
 - La liste des modèles affichée dans l'interface est rafraîchie en live via Codex quand la configuration est chargée.
 - Les sessions et l'état local sont persistés côté serveur.
 - Codex CLI doit être installé et connecté sur la machine pour que les sessions Codex fonctionnent.

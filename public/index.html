@@ -8,6 +8,23 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <section id="authGate" class="auth-gate" aria-hidden="true">
+      <div class="auth-card" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+        <div class="auth-copy">
+          <p class="eyebrow">Codex Mobile</p>
+          <h1 id="authTitle">Connexion</h1>
+          <p id="authHint" class="auth-hint">Saisis le token d'accès pour ouvrir l'interface.</p>
+        </div>
+        <form id="authForm" class="auth-form">
+          <label class="field">
+            <span>Token d'accès</span>
+            <input id="authTokenInput" type="password" autocomplete="current-password" placeholder="colle le token" required />
+          </label>
+          <button id="authSubmitButton" class="primary-button auth-submit" type="submit">Se connecter</button>
+        </form>
+      </div>
+    </section>
+
     <div class="app-shell">
       <header class="topbar">
         <div class="topbar-copy">
@@ -173,6 +190,12 @@
                 </span>
                 <input id="workspaceRootInput" class="setting-input setting-input-wide" name="workspaceRoot" type="text" placeholder="/projects" />
               </label>
+              <button id="logoutButton" class="setting-action-button" type="button" aria-label="Déconnexion">
+                <span class="setting-action-copy">
+                  <strong>Déconnexion</strong>
+                </span>
+                <i class="bi bi-power power-icon" aria-hidden="true"></i>
+              </button>
               </section>
               <section class="settings-group">
                 <h3>Accès Codex</h3>

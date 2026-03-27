@@ -8,6 +8,8 @@ const { spawn, spawnSync } = require("child_process");
 const readline = require("readline");
 const WebSocket = require("ws");
 
+loadEnvFile(process.env.CODEX_MOBILE_ENV_FILE || "/etc/codex-mobile/.env");
+
 const PORT = Number(process.env.PORT || 4180);
 const ROOT_DIR = __dirname;
 const TEST_MODE = process.env.CODEX_MOBILE_TEST_MODE === "1";
@@ -17,6 +19,10 @@ const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
 const DEFAULT_WORKSPACE_ROOT = process.env.CODEX_MOBILE_DEFAULT_WORKSPACE_ROOT || "/projects";
 const CODEX_CONFIG_FILE = process.env.CODEX_MOBILE_CONFIG_FILE || "/root/.codex/config.toml";
 const CODEX_MODELS_CACHE_FILE = process.env.CODEX_MOBILE_MODELS_CACHE_FILE || "/root/.codex/models_cache.json";
+const AUTH_TOKEN = String(process.env.CODEX_MOBILE_AUTH_TOKEN || "").trim();
+const AUTH_ENABLED = !TEST_MODE && Boolean(AUTH_TOKEN);
+const AUTH_COOKIE_NAME = "codex_mobile_auth";
+const AUTH_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 
 const app = express();
 const server = http.createServer(app);
@@ -34,6 +40,7 @@ app.use(express.static(path.join(ROOT_DIR, "public"), {
 }));
 
 const runtimes = new Map();
+const authSessions = new Map();
 let persistedState = loadState();
 
 boot().catch((error) => {
@@ -87,6 +94,47 @@ async function boot() {
 }
 
 function registerRoutes() {
+  app.get("/api/auth/status", (req, res) => {
+    res.json({
+      enabled: AUTH_ENABLED,
+      authenticated: isAuthenticatedRequest(req),
+    });
+  });
+
+  app.post("/api/auth/login", (req, res) => {
+    if (!AUTH_ENABLED) {
+      return res.json({ ok: true, enabled: false, authenticated: true });
+    }
+
+    const token = String(req.body?.token || "");
+    if (!isMatchingAuthToken(token)) {
+      return res.status(401).json({ error: "Invalid token" });
+    }
+
+    const sessionId = createAuthSession();
+    setAuthCookie(res, sessionId);
+    res.json({ ok: true, enabled: true, authenticated: true });
+  });
+
+  app.post("/api/auth/logout", (req, res) => {
+    const sessionId = parseCookies(req.headers.cookie || "")[AUTH_COOKIE_NAME];
+    if (sessionId) {
+      authSessions.delete(sessionId);
+    }
+    clearAuthCookie(res);
+    res.json({ ok: true });
+  });
+
+  app.use("/api", (req, res, next) => {
+    if (req.path === "/auth/status" || req.path === "/auth/login" || req.path === "/auth/logout") {
+      return next();
+    }
+    if (!AUTH_ENABLED || isAuthenticatedRequest(req)) {
+      return next();
+    }
+    res.status(401).json({ error: "Authentication required" });
+  });
+
   app.get("/api/bootstrap", (_req, res) => {
     res.json(buildBootstrap());
   });
@@ -275,6 +323,11 @@ function registerWebsocket() {
 }
 
 async function handleWebsocketConnection(socket, req) {
+    if (AUTH_ENABLED && !isAuthenticatedRequest(req)) {
+      socket.close(1008, "Authentication required");
+      return;
+    }
+
     const url = new URL(req.url, `http://${req.headers.host}`);
     const sessionId = url.searchParams.get("sessionId");
     const session = findSession(sessionId);
@@ -694,6 +747,108 @@ function loadState() {
   } catch (error) {
     console.error("Failed to load state:", error);
     return { sessions: [], lastSessionId: null, hiddenSessionIds: [], appConfig: { workspaceRoot: DEFAULT_WORKSPACE_ROOT } };
+  }
+}
+
+function loadEnvFile(envFile) {
+  try {
+    if (!envFile || !fs.existsSync(envFile)) {
+      return;
+    }
+
+    const lines = fs.readFileSync(envFile, "utf8").split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) {
+        continue;
+      }
+
+      const separatorIndex = trimmed.indexOf("=");
+      if (separatorIndex === -1) {
+        continue;
+      }
+
+      const key = trimmed.slice(0, separatorIndex).trim();
+      const rawValue = trimmed.slice(separatorIndex + 1).trim();
+      const value = rawValue.replace(/^['"]|['"]$/g, "");
+      if (key && !(key in process.env)) {
+        process.env[key] = value;
+      }
+    }
+  } catch (error) {
+    console.error("Failed to load env file:", error);
+  }
+}
+
+function parseCookies(cookieHeader) {
+  const cookies = {};
+  for (const chunk of String(cookieHeader || "").split(";")) {
+    const [rawKey, ...rest] = chunk.trim().split("=");
+    if (!rawKey) {
+      continue;
+    }
+    cookies[rawKey] = decodeURIComponent(rest.join("=") || "");
+  }
+  return cookies;
+}
+
+function createAuthSession() {
+  const sessionId = crypto.randomUUID();
+  authSessions.set(sessionId, Date.now() + AUTH_SESSION_TTL_SECONDS * 1000);
+  return sessionId;
+}
+
+function setAuthCookie(res, sessionId) {
+  res.setHeader(
+    "Set-Cookie",
+    `${AUTH_COOKIE_NAME}=${encodeURIComponent(sessionId)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${AUTH_SESSION_TTL_SECONDS}`
+  );
+}
+
+function clearAuthCookie(res) {
+  res.setHeader(
+    "Set-Cookie",
+    `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`
+  );
+}
+
+function isMatchingAuthToken(candidate) {
+  const candidateBuffer = Buffer.from(String(candidate || ""));
+  const tokenBuffer = Buffer.from(AUTH_TOKEN);
+  if (!candidateBuffer.length || candidateBuffer.length !== tokenBuffer.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(candidateBuffer, tokenBuffer);
+}
+
+function isAuthenticatedRequest(req) {
+  if (!AUTH_ENABLED) {
+    return true;
+  }
+
+  cleanupExpiredAuthSessions();
+  const cookies = parseCookies(req.headers.cookie || "");
+  const sessionId = cookies[AUTH_COOKIE_NAME];
+  if (!sessionId) {
+    return false;
+  }
+
+  const expiresAt = authSessions.get(sessionId);
+  if (!expiresAt || expiresAt <= Date.now()) {
+    authSessions.delete(sessionId);
+    return false;
+  }
+
+  authSessions.set(sessionId, Date.now() + AUTH_SESSION_TTL_SECONDS * 1000);
+  return true;
+}
+
+function cleanupExpiredAuthSessions() {
+  const now = Date.now();
+  for (const [sessionId, expiresAt] of authSessions.entries()) {
+    if (expiresAt <= now) {
+      authSessions.delete(sessionId);
+    }
   }
 }
 
