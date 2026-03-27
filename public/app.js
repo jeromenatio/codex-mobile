@@ -15,6 +15,14 @@ const themes = [
   "terracotta-dusk",
 ];
 
+const defaultQuickPrompts = [
+  {
+    name: "Commit & push",
+    text: "Commit et push. Utilise le token GitHub se trouvant dans /etc/codex-mobile/.env. S'il n'existe pas encore de dépôt, crée-le d'abord.",
+    locked: true,
+  },
+];
+
 marked.setOptions({
   breaks: true,
   gfm: true,
@@ -33,6 +41,7 @@ const state = {
   settings: loadSettings(),
   appConfig: {
     workspaceRoot: "/projects",
+    githubToken: "",
   },
   codexConfig: {
     model: "gpt-5.4",
@@ -88,6 +97,7 @@ const elements = {
   themeValueInput: document.getElementById("themeValueInput"),
   notificationDurationInput: document.getElementById("notificationDurationInput"),
   workspaceRootInput: document.getElementById("workspaceRootInput"),
+  githubTokenInput: document.getElementById("githubTokenInput"),
   sandboxDangerInput: document.getElementById("sandboxDangerInput"),
   approvalNeverInput: document.getElementById("approvalNeverInput"),
   hideFullAccessWarningInput: document.getElementById("hideFullAccessWarningInput"),
@@ -841,6 +851,7 @@ async function openConfigModal() {
   elements.themeValueInput.value = state.settings.theme;
   elements.notificationDurationInput.value = String(state.settings.notificationDurationSeconds);
   elements.workspaceRootInput.value = state.appConfig.workspaceRoot || "/projects";
+  elements.githubTokenInput.value = state.appConfig.githubToken || "";
   elements.sandboxDangerInput.checked = Boolean(state.codexConfig.sandboxDangerFullAccess);
   elements.approvalNeverInput.checked = Boolean(state.codexConfig.approvalNever);
   elements.hideFullAccessWarningInput.checked = Boolean(state.codexConfig.hideFullAccessWarning);
@@ -1208,6 +1219,9 @@ function renderPromptList() {
   elements.promptList.innerHTML = prompts
     .map((prompt) => {
       const preview = escapeHtml(prompt.text).replace(/\n/g, " ");
+      const locked = isLockedPrompt(prompt);
+      const lockedClass = locked ? " is-disabled" : "";
+      const lockedAttr = locked ? " disabled aria-disabled=\"true\"" : "";
       return `
         <article class="prompt-item" data-prompt-id="${escapeHtml(prompt.id)}">
           <div class="prompt-copy">
@@ -1218,10 +1232,10 @@ function renderPromptList() {
             <button class="session-action icon-button plain-button" type="button" data-prompt-action="use" data-prompt-id="${escapeHtml(prompt.id)}" aria-label="Utiliser ${escapeHtml(prompt.name)}">
               <i class="bi bi-arrow-return-left icon-glyph" aria-hidden="true"></i>
             </button>
-            <button class="session-action icon-button plain-button" type="button" data-prompt-action="edit" data-prompt-id="${escapeHtml(prompt.id)}" aria-label="Modifier ${escapeHtml(prompt.name)}">
+            <button class="session-action icon-button plain-button${lockedClass}" type="button" data-prompt-action="edit" data-prompt-id="${escapeHtml(prompt.id)}" aria-label="Modifier ${escapeHtml(prompt.name)}"${lockedAttr}>
               <i class="bi bi-pencil-fill icon-glyph" aria-hidden="true"></i>
             </button>
-            <button class="session-action icon-button plain-button" type="button" data-prompt-action="delete" data-prompt-id="${escapeHtml(prompt.id)}" aria-label="Supprimer ${escapeHtml(prompt.name)}">
+            <button class="session-action icon-button plain-button${lockedClass}" type="button" data-prompt-action="delete" data-prompt-id="${escapeHtml(prompt.id)}" aria-label="Supprimer ${escapeHtml(prompt.name)}"${lockedAttr}>
               <i class="bi bi-trash3-fill icon-glyph" aria-hidden="true"></i>
             </button>
           </div>
@@ -1262,6 +1276,10 @@ function startEditPrompt(promptId) {
     notify("error", "Prompt introuvable.");
     return;
   }
+  if (isLockedPrompt(prompt)) {
+    notify("info", "Ce prompt par défaut ne peut pas être modifié.");
+    return;
+  }
   state.editingPromptId = promptId;
   elements.promptNameInput.value = prompt.name || "";
   elements.promptTextInput.value = prompt.text || "";
@@ -1284,6 +1302,15 @@ function usePrompt(promptId) {
 }
 
 function deletePrompt(promptId) {
+  const prompt = (state.settings.prompts || []).find((item) => item.id === promptId);
+  if (!prompt) {
+    notify("error", "Prompt introuvable.");
+    return;
+  }
+  if (isLockedPrompt(prompt)) {
+    notify("info", "Ce prompt par défaut ne peut pas être supprimé.");
+    return;
+  }
   const prompts = (state.settings.prompts || []).filter((item) => item.id !== promptId);
   state.settings.prompts = prompts;
   if (state.editingPromptId === promptId) {
@@ -1717,6 +1744,7 @@ async function onSaveConfig(event) {
   const theme = normalizeTheme(state.settings.theme || elements.themeValueInput.value || elements.themeSelect.value);
   const seconds = clampDuration(elements.notificationDurationInput.value);
   const workspaceRoot = String(elements.workspaceRootInput.value || "").trim() || "/projects";
+  const githubToken = String(elements.githubTokenInput.value || "").trim();
   const payload = {
     model: state.codexConfig.model,
     sandboxDangerFullAccess: elements.sandboxDangerInput.checked,
@@ -1728,7 +1756,7 @@ async function onSaveConfig(event) {
   const appResponse = await apiFetch("/api/config/app", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ workspaceRoot }),
+    body: JSON.stringify({ workspaceRoot, githubToken }),
   });
 
   if (!appResponse.ok) {
@@ -1750,7 +1778,10 @@ async function onSaveConfig(event) {
   }
 
   const appConfigPayload = await appResponse.json();
-  state.appConfig = { workspaceRoot: appConfigPayload.workspaceRoot || "/projects" };
+  state.appConfig = {
+    workspaceRoot: appConfigPayload.workspaceRoot || "/projects",
+    githubToken: appConfigPayload.githubToken || "",
+  };
   state.codexConfig = await codexResponse.json();
 
   state.settings.theme = theme;
@@ -1782,27 +1813,46 @@ function loadSettings() {
   try {
     const raw = localStorage.getItem(settingsKey);
     const parsed = raw ? JSON.parse(raw) : {};
-    return {
-      theme: normalizeTheme(parsed.theme),
-      notificationDurationSeconds: clampDuration(parsed.notificationDurationSeconds),
-      prompts: Array.isArray(parsed.prompts)
-        ? parsed.prompts
-            .filter((item) => item && typeof item.name === "string" && typeof item.text === "string")
-            .map((item) => ({
+    const prompts = Array.isArray(parsed.prompts)
+      ? parsed.prompts
+          .filter((item) => item && typeof item.name === "string" && typeof item.text === "string")
+          .map((item) => ({
               id: typeof item.id === "string" && item.id ? item.id : crypto.randomUUID(),
               name: item.name.trim(),
               text: item.text.trim(),
+              locked: Boolean(item.locked),
             }))
-            .filter((item) => item.name && item.text)
-        : [],
+          .filter((item) => item.name && item.text)
+      : [];
+    return {
+      theme: normalizeTheme(parsed.theme),
+      notificationDurationSeconds: clampDuration(parsed.notificationDurationSeconds),
+      prompts: withDefaultQuickPrompts(prompts),
     };
   } catch {
-    return { theme: "sandstone", notificationDurationSeconds: 5, prompts: [] };
+    return { theme: "sandstone", notificationDurationSeconds: 5, prompts: withDefaultQuickPrompts([]) };
   }
 }
 
 function persistSettings() {
   localStorage.setItem(settingsKey, JSON.stringify(state.settings));
+}
+
+function withDefaultQuickPrompts(prompts) {
+  const merged = [...prompts];
+  for (const item of defaultQuickPrompts) {
+    const index = merged.findIndex((prompt) => prompt.name.trim().toLowerCase() === item.name.trim().toLowerCase());
+    if (index === -1) {
+      merged.push({ id: crypto.randomUUID(), ...item });
+      continue;
+    }
+    merged[index] = { ...merged[index], locked: Boolean(item.locked) };
+  }
+  return merged;
+}
+
+function isLockedPrompt(prompt) {
+  return Boolean(prompt?.locked);
 }
 
 function applyTheme(theme) {

@@ -19,6 +19,7 @@ const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
 const DEFAULT_WORKSPACE_ROOT = process.env.CODEX_MOBILE_DEFAULT_WORKSPACE_ROOT || "/projects";
 const CODEX_CONFIG_FILE = process.env.CODEX_MOBILE_CONFIG_FILE || "/root/.codex/config.toml";
 const CODEX_MODELS_CACHE_FILE = process.env.CODEX_MOBILE_MODELS_CACHE_FILE || "/root/.codex/models_cache.json";
+const CODEX_MOBILE_ENV_FILE = process.env.CODEX_MOBILE_ENV_FILE || "/etc/codex-mobile/.env";
 const AUTH_TOKEN = String(process.env.CODEX_MOBILE_AUTH_TOKEN || "").trim();
 const AUTH_ENABLED = !TEST_MODE && Boolean(AUTH_TOKEN);
 const AUTH_COOKIE_NAME = "codex_mobile_auth";
@@ -149,20 +150,26 @@ function registerRoutes() {
   });
 
   app.get("/api/config/app", (_req, res) => {
-    res.json({ workspaceRoot: getWorkspaceRoot() });
+    res.json({
+      workspaceRoot: getWorkspaceRoot(),
+      githubToken: String(process.env.GITHUB_TOKEN || ""),
+    });
   });
 
   app.put("/api/config/app", async (req, res) => {
     try {
       const workspaceRoot = normalizeWorkspaceRoot(req.body?.workspaceRoot);
+      const githubToken = String(req.body?.githubToken || "").trim();
       await fsp.mkdir(workspaceRoot, { recursive: true });
+      await upsertEnvValue(CODEX_MOBILE_ENV_FILE, "GITHUB_TOKEN", githubToken);
+      process.env.GITHUB_TOKEN = githubToken;
       persistedState.appConfig = { workspaceRoot };
       const visibleSessions = persistedState.sessions.filter((session) => isSessionInWorkspaceRoot(session));
       persistedState.lastSessionId = visibleSessions.some((session) => session.id === persistedState.lastSessionId)
         ? persistedState.lastSessionId
         : visibleSessions[0]?.id || null;
       await saveState();
-      res.json({ workspaceRoot, bootstrap: buildBootstrap() });
+      res.json({ workspaceRoot, githubToken, bootstrap: buildBootstrap() });
     } catch (error) {
       console.error("Failed to update app config:", error);
       res.status(500).json({ error: error.message || "Failed to update app config" });
@@ -778,6 +785,43 @@ function loadEnvFile(envFile) {
   } catch (error) {
     console.error("Failed to load env file:", error);
   }
+}
+
+async function upsertEnvValue(envFile, key, value) {
+  const targetPath = path.resolve(envFile);
+  await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+
+  let source = "";
+  try {
+    source = await fsp.readFile(targetPath, "utf8");
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  const lines = source ? source.split(/\r?\n/) : [];
+  const nextLines = [];
+  let replaced = false;
+
+  for (const line of lines) {
+    if (!line.startsWith(`${key}=`)) {
+      nextLines.push(line);
+      continue;
+    }
+
+    if (!replaced) {
+      nextLines.push(`${key}=${value}`);
+      replaced = true;
+    }
+  }
+
+  if (!replaced) {
+    nextLines.push(`${key}=${value}`);
+  }
+
+  const serialized = `${nextLines.join("\n").replace(/\n+$/u, "")}\n`;
+  await fsp.writeFile(targetPath, serialized, "utf8");
 }
 
 function parseCookies(cookieHeader) {
