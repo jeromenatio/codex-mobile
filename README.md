@@ -25,10 +25,14 @@ Commande officielle OpenAI :
 ```bash
 npm install -g @openai/codex
 codex --version
+codex login
 ```
 
 Source :
 - https://help.openai.com/en/articles/11096431-openai-codex-ci-getting-started
+
+Connexion requise :
+- connecte-toi avec `codex login` avant de lancer l'application
 
 ## Cloner le repo
 
