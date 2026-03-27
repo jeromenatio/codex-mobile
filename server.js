@@ -13,7 +13,7 @@ const ROOT_DIR = __dirname;
 const DATA_DIR = path.join(ROOT_DIR, "data");
 const STATE_FILE = path.join(DATA_DIR, "state.json");
 const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
-const WORKSPACES_DIR = "/projects";
+const DEFAULT_WORKSPACE_ROOT = "/projects";
 const CODEX_CONFIG_FILE = "/root/.codex/config.toml";
 const CODEX_MODELS_CACHE_FILE = "/root/.codex/models_cache.json";
 
@@ -43,11 +43,12 @@ boot().catch((error) => {
 async function boot() {
   await fsp.mkdir(DATA_DIR, { recursive: true });
   await fsp.mkdir(UPLOADS_DIR, { recursive: true });
-  await fsp.mkdir(WORKSPACES_DIR, { recursive: true });
 
   persistedState.sessions = Array.isArray(persistedState.sessions) ? persistedState.sessions : [];
   persistedState.lastSessionId = persistedState.lastSessionId || null;
   persistedState.hiddenSessionIds = Array.isArray(persistedState.hiddenSessionIds) ? persistedState.hiddenSessionIds : [];
+  persistedState.appConfig = normalizeAppConfig(persistedState.appConfig);
+  await fsp.mkdir(getWorkspaceRoot(), { recursive: true });
 
   let changed = false;
   for (const session of persistedState.sessions) {
@@ -93,6 +94,27 @@ function registerRoutes() {
     } catch (error) {
       console.error("Failed to read Codex config:", error);
       res.status(500).json({ error: error.message || "Failed to read Codex config" });
+    }
+  });
+
+  app.get("/api/config/app", (_req, res) => {
+    res.json({ workspaceRoot: getWorkspaceRoot() });
+  });
+
+  app.put("/api/config/app", async (req, res) => {
+    try {
+      const workspaceRoot = normalizeWorkspaceRoot(req.body?.workspaceRoot);
+      await fsp.mkdir(workspaceRoot, { recursive: true });
+      persistedState.appConfig = { workspaceRoot };
+      const visibleSessions = persistedState.sessions.filter((session) => isSessionInWorkspaceRoot(session));
+      persistedState.lastSessionId = visibleSessions.some((session) => session.id === persistedState.lastSessionId)
+        ? persistedState.lastSessionId
+        : visibleSessions[0]?.id || null;
+      await saveState();
+      res.json({ workspaceRoot, bootstrap: buildBootstrap() });
+    } catch (error) {
+      console.error("Failed to update app config:", error);
+      res.status(500).json({ error: error.message || "Failed to update app config" });
     }
   });
 
@@ -476,7 +498,7 @@ async function persistAttachments(sessionId, attachmentsInput) {
 
 async function ensureWorkspace(label) {
   const id = slugify(label) || `workspace-${Date.now()}`;
-  const workspacePath = path.join(WORKSPACES_DIR, id);
+  const workspacePath = path.join(getWorkspaceRoot(), id);
   await fsp.mkdir(workspacePath, { recursive: true });
 
   return {
@@ -490,6 +512,7 @@ function buildBootstrap() {
   syncExternalCodexSessions();
 
   const sessions = persistedState.sessions
+    .filter((session) => isSessionInWorkspaceRoot(session))
     .slice()
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
     .map(sanitizeSession);
@@ -508,7 +531,10 @@ function buildBootstrap() {
   }
 
   return {
-    lastSessionId: persistedState.lastSessionId || sessions[0]?.id || null,
+    lastSessionId:
+      sessions.some((session) => session.id === persistedState.lastSessionId)
+        ? persistedState.lastSessionId
+        : sessions[0]?.id || null,
     sessions,
     workspaces: [...workspaces.values()].sort((a, b) => a.name.localeCompare(b.name)),
   };
@@ -557,12 +583,12 @@ function broadcastToSession(sessionId, message) {
 function loadState() {
   try {
     if (!fs.existsSync(STATE_FILE)) {
-      return { sessions: [], lastSessionId: null, hiddenSessionIds: [] };
+      return { sessions: [], lastSessionId: null, hiddenSessionIds: [], appConfig: { workspaceRoot: DEFAULT_WORKSPACE_ROOT } };
     }
     return JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
   } catch (error) {
     console.error("Failed to load state:", error);
-    return { sessions: [], lastSessionId: null, hiddenSessionIds: [] };
+    return { sessions: [], lastSessionId: null, hiddenSessionIds: [], appConfig: { workspaceRoot: DEFAULT_WORKSPACE_ROOT } };
   }
 }
 
@@ -713,7 +739,7 @@ function setNoCacheHeaders(res) {
 }
 
 function syncExternalCodexSessions() {
-  const threads = readCodexThreads();
+  const threads = readCodexThreads(getWorkspaceRoot());
   if (!threads.length) {
     return;
   }
@@ -759,7 +785,7 @@ function syncExternalCodexSessions() {
   }
 }
 
-function readCodexThreads() {
+function readCodexThreads(workspaceRoot) {
   const script = `
 import json, sqlite3
 from pathlib import Path
@@ -771,13 +797,16 @@ if not db.exists():
 
 con = sqlite3.connect(str(db))
 cur = con.cursor()
+workspace_root = ${JSON.stringify(workspaceRoot)}
 rows = cur.execute(
-    "select id, cwd, title, created_at, updated_at, rollout_path from threads where archived = 0 and cwd like '/projects/%' order by updated_at desc"
+    "select id, cwd, title, created_at, updated_at, rollout_path from threads where archived = 0 and cwd like ? order by updated_at desc",
+    (workspace_root.rstrip("/") + "/%",)
 ).fetchall()
 
 items = []
 for thread_id, cwd, title, created_at, updated_at, rollout_path in rows:
-    rel = cwd[len('/projects/'):]
+    prefix = workspace_root.rstrip("/") + "/"
+    rel = cwd[len(prefix):]
     if not rel:
         continue
     workspace = rel.split('/', 1)[0]
@@ -927,4 +956,30 @@ function slugify(value) {
     .replace(/[^\w\s-]/g, "")
     .trim()
     .replace(/[-\s]+/g, "-");
+}
+
+function normalizeAppConfig(config) {
+  return {
+    workspaceRoot: normalizeWorkspaceRoot(config?.workspaceRoot),
+  };
+}
+
+function normalizeWorkspaceRoot(value) {
+  const input = String(value || "").trim();
+  if (!input) {
+    return DEFAULT_WORKSPACE_ROOT;
+  }
+
+  const resolved = path.resolve(input);
+  return resolved || DEFAULT_WORKSPACE_ROOT;
+}
+
+function getWorkspaceRoot() {
+  return normalizeWorkspaceRoot(persistedState?.appConfig?.workspaceRoot);
+}
+
+function isSessionInWorkspaceRoot(session) {
+  const workspacePath = String(session?.workspacePath || "");
+  const root = getWorkspaceRoot();
+  return workspacePath === root || workspacePath.startsWith(`${root}${path.sep}`);
 }

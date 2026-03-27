@@ -15,6 +15,9 @@ const state = {
   socket: null,
   messages: [],
   settings: loadSettings(),
+  appConfig: {
+    workspaceRoot: "/projects",
+  },
   codexConfig: {
     model: "gpt-5.4",
     availableModels: [],
@@ -59,6 +62,7 @@ const elements = {
   configForm: document.getElementById("configForm"),
   themeSelect: document.getElementById("themeSelect"),
   notificationDurationInput: document.getElementById("notificationDurationInput"),
+  workspaceRootInput: document.getElementById("workspaceRootInput"),
   sandboxDangerInput: document.getElementById("sandboxDangerInput"),
   approvalNeverInput: document.getElementById("approvalNeverInput"),
   hideFullAccessWarningInput: document.getElementById("hideFullAccessWarningInput"),
@@ -155,6 +159,11 @@ async function bootstrap() {
     await refreshCodexConfig();
   } catch (error) {
     console.warn("Codex config bootstrap failed:", error);
+  }
+  try {
+    await refreshAppConfig();
+  } catch (error) {
+    console.warn("App config bootstrap failed:", error);
   }
   await refreshBootstrap();
   const targetSessionId = pickSessionId();
@@ -266,6 +275,14 @@ async function refreshCodexConfig() {
   }
   state.codexConfig = await response.json();
   renderModelTrigger();
+}
+
+async function refreshAppConfig() {
+  const response = await fetch("/api/config/app");
+  if (!response.ok) {
+    throw new Error("Impossible de charger la configuration application.");
+  }
+  state.appConfig = await response.json();
 }
 
 function renderModelTrigger() {
@@ -636,13 +653,14 @@ async function openConfigModal() {
   closeRenameModal();
   closeDeleteModal();
   try {
-    await refreshCodexConfig();
+    await Promise.all([refreshCodexConfig(), refreshAppConfig()]);
   } catch {
     notify("error", "Chargement de la configuration impossible.");
     return;
   }
   elements.themeSelect.value = state.settings.theme;
   elements.notificationDurationInput.value = String(state.settings.notificationDurationSeconds);
+  elements.workspaceRootInput.value = state.appConfig.workspaceRoot || "/projects";
   elements.sandboxDangerInput.checked = Boolean(state.codexConfig.sandboxDangerFullAccess);
   elements.approvalNeverInput.checked = Boolean(state.codexConfig.approvalNever);
   elements.hideFullAccessWarningInput.checked = Boolean(state.codexConfig.hideFullAccessWarning);
@@ -1506,6 +1524,7 @@ async function onSaveConfig(event) {
   event.preventDefault();
   const theme = normalizeTheme(elements.themeSelect.value);
   const seconds = clampDuration(elements.notificationDurationInput.value);
+  const workspaceRoot = String(elements.workspaceRootInput.value || "").trim() || "/projects";
   const payload = {
     model: state.codexConfig.model,
     sandboxDangerFullAccess: elements.sandboxDangerInput.checked,
@@ -1514,22 +1533,55 @@ async function onSaveConfig(event) {
     search: elements.searchInput.checked,
   };
 
-  const response = await fetch("/api/config/codex", {
+  const appResponse = await fetch("/api/config/app", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workspaceRoot }),
+  });
+
+  if (!appResponse.ok) {
+    notify("error", "Mise a jour du dossier racine impossible.");
+    return;
+  }
+
+  const codexResponse = await fetch("/api/config/codex", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 
-  if (!response.ok) {
+  if (!codexResponse.ok) {
     notify("error", "Mise a jour de la configuration Codex impossible.");
+    await refreshAppConfig();
+    await refreshBootstrap();
     return;
   }
 
+  const appConfigPayload = await appResponse.json();
+  state.appConfig = { workspaceRoot: appConfigPayload.workspaceRoot || "/projects" };
+  state.codexConfig = await codexResponse.json();
+
   state.settings.theme = theme;
   state.settings.notificationDurationSeconds = seconds;
-  state.codexConfig = await response.json();
   persistSettings();
   applyTheme(theme);
+  state.bootstrap = appConfigPayload.bootstrap || state.bootstrap;
+  if (!state.bootstrap) {
+    await refreshBootstrap();
+  } else {
+    renderSessionList();
+  }
+  const targetSessionId = pickSessionId();
+  if (targetSessionId) {
+    await activateSession(targetSessionId);
+  } else {
+    disconnectSocket();
+    state.activeSessionId = null;
+    state.messages = [];
+    renderSessionList();
+    updateHeader(null);
+    renderMessages();
+  }
   closeConfigModal();
   notify("success", `Configuration enregistree. Notifications a ${seconds}s.`);
 }
