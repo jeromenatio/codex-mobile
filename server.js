@@ -10,12 +10,13 @@ const WebSocket = require("ws");
 
 const PORT = Number(process.env.PORT || 4180);
 const ROOT_DIR = __dirname;
-const DATA_DIR = path.join(ROOT_DIR, "data");
+const TEST_MODE = process.env.CODEX_MOBILE_TEST_MODE === "1";
+const DATA_DIR = process.env.CODEX_MOBILE_DATA_DIR || path.join(ROOT_DIR, "data");
 const STATE_FILE = path.join(DATA_DIR, "state.json");
 const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
-const DEFAULT_WORKSPACE_ROOT = "/projects";
-const CODEX_CONFIG_FILE = "/root/.codex/config.toml";
-const CODEX_MODELS_CACHE_FILE = "/root/.codex/models_cache.json";
+const DEFAULT_WORKSPACE_ROOT = process.env.CODEX_MOBILE_DEFAULT_WORKSPACE_ROOT || "/projects";
+const CODEX_CONFIG_FILE = process.env.CODEX_MOBILE_CONFIG_FILE || "/root/.codex/config.toml";
+const CODEX_MODELS_CACHE_FILE = process.env.CODEX_MOBILE_MODELS_CACHE_FILE || "/root/.codex/models_cache.json";
 
 const app = express();
 const server = http.createServer(app);
@@ -73,7 +74,9 @@ async function boot() {
     await saveState();
   }
 
-  syncExternalCodexSessions();
+  if (!TEST_MODE) {
+    syncExternalCodexSessions();
+  }
 
   registerRoutes();
   registerWebsocket();
@@ -354,6 +357,10 @@ async function appendUserMessage(session, text, attachments = []) {
 }
 
 function runSessionTurn(session, prompt, attachments = []) {
+  if (TEST_MODE) {
+    return runFakeSessionTurn(session, prompt, attachments);
+  }
+
   const args = buildCodexArgs(session, prompt, attachments);
   const child = spawn("codex", args, {
     cwd: session.workspacePath,
@@ -398,38 +405,109 @@ function runSessionTurn(session, prompt, attachments = []) {
     runtime.process = null;
     const interrupted = Boolean(runtime.interruptRequested);
     runtime.interruptRequested = false;
-
-    if (!pendingMessage.text.trim()) {
-      pendingMessage.text =
-        interrupted
-          ? "Réponse interrompue."
-          : code === 0
-          ? "Réponse vide."
-          : `La session Codex a échoué${runtime.stderr.length ? `: ${runtime.stderr.join(" ")}` : "."}`;
-    }
-
-    pendingMessage.pending = false;
-    session.status = interrupted ? "idle" : code === 0 ? "idle" : "error";
-    session.updatedAt = new Date().toISOString();
-
-    broadcastToSession(session.id, {
-      type: "message.updated",
-      message: pendingMessage,
-      session: sanitizeSession(session),
-    });
-
-    broadcastToSession(session.id, {
-      type: "status",
-      session: sanitizeSession(session),
-    });
-
-    runtime.stderr = [];
-    await saveState();
-
-    if (runtime.clients.size === 0) {
-      runtimes.delete(session.id);
-    }
+    await finalizeSessionTurn(session, runtime, pendingMessage, { code, interrupted });
   });
+}
+
+function runFakeSessionTurn(session, prompt, attachments = []) {
+  const runtime = ensureRuntimeShell(session.id);
+  runtime.interruptRequested = false;
+
+  const pendingMessage = {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    text: "",
+    createdAt: new Date().toISOString(),
+    pending: true,
+  };
+
+  session.messages.push(pendingMessage);
+  session.status = "running";
+  session.updatedAt = new Date().toISOString();
+  session.threadId = session.threadId || `test-thread-${session.id}`;
+  void saveState();
+  broadcastToSession(session.id, {
+    type: "message",
+    message: pendingMessage,
+    session: sanitizeSession(session),
+  });
+
+  const delay = prompt.includes("__SLOW__") ? 5000 : 120;
+  const timer = setTimeout(async () => {
+    runtime.process = null;
+    pendingMessage.text = buildFakeAssistantResponse(session, prompt, attachments);
+    await finalizeSessionTurn(session, runtime, pendingMessage, { code: 0, interrupted: false });
+  }, delay);
+
+  runtime.process = {
+    kill() {
+      clearTimeout(timer);
+      if (!runtime.process) {
+        return;
+      }
+      runtime.process = null;
+      runtime.interruptRequested = true;
+      void finalizeSessionTurn(session, runtime, pendingMessage, { code: 0, interrupted: true });
+    },
+  };
+}
+
+function buildFakeAssistantResponse(session, prompt, attachments = []) {
+  if (prompt.includes("__MARKDOWN__")) {
+    return [
+      "# Réponse de test",
+      "",
+      "- item 1",
+      "- item 2",
+      "",
+      "```js",
+      "console.log('ok');",
+      "```",
+    ].join("\n");
+  }
+
+  if (attachments.length) {
+    return `Images reçues: ${attachments.length}`;
+  }
+
+  if (prompt.includes("__LONG__")) {
+    return `Réponse longue pour ${session.name}\n\n${"ligne de test\n".repeat(30).trim()}`;
+  }
+
+  return `Réponse de test: ${prompt}`;
+}
+
+async function finalizeSessionTurn(session, runtime, pendingMessage, { code = 0, interrupted = false }) {
+  if (!pendingMessage.text.trim()) {
+    pendingMessage.text =
+      interrupted
+        ? "Réponse interrompue."
+        : code === 0
+        ? "Réponse vide."
+        : `La session Codex a échoué${runtime.stderr.length ? `: ${runtime.stderr.join(" ")}` : "."}`;
+  }
+
+  pendingMessage.pending = false;
+  session.status = interrupted ? "idle" : code === 0 ? "idle" : "error";
+  session.updatedAt = new Date().toISOString();
+
+  broadcastToSession(session.id, {
+    type: "message.updated",
+    message: pendingMessage,
+    session: sanitizeSession(session),
+  });
+
+  broadcastToSession(session.id, {
+    type: "status",
+    session: sanitizeSession(session),
+  });
+
+  runtime.stderr = [];
+  await saveState();
+
+  if (runtime.clients.size === 0 && !runtime.process) {
+    runtimes.delete(session.id);
+  }
 }
 
 function consumeCodexEvent(session, pendingMessage, line) {
@@ -762,6 +840,9 @@ function readAvailableModels() {
 }
 
 async function readAvailableModelsLive() {
+  if (TEST_MODE) {
+    return getTestModels();
+  }
   try {
     const models = await requestCodexAppServerModels();
     return models.length ? models : readAvailableModels();
@@ -769,6 +850,15 @@ async function readAvailableModelsLive() {
     console.error("Failed to refresh available Codex models:", error);
     return readAvailableModels();
   }
+}
+
+function getTestModels() {
+  return [
+    { slug: "gpt-5.4", label: "gpt-5.4", description: "Latest frontier agentic coding model." },
+    { slug: "gpt-5.4-mini", label: "GPT-5.4-Mini", description: "Smaller frontier agentic coding model." },
+    { slug: "gpt-5.3-codex", label: "gpt-5.3-codex", description: "Frontier Codex-optimized agentic coding model." },
+    { slug: "gpt-5.3-codex-spark", label: "GPT-5.3-Codex-Spark", description: "Ultra-fast coding model." },
+  ];
 }
 
 async function requestCodexAppServerModels() {
