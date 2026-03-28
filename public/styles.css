@@ -1912,30 +1912,6 @@ textarea {
   grid-template-columns: auto minmax(0, 1fr);
 }
 
-.setting-action-button {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: center;
-  width: 100%;
-  padding: 12px 14px;
-  border-radius: 18px;
-  border: 1px solid var(--line);
-  background: var(--panel-soft);
-  color: var(--ink);
-  cursor: pointer;
-  text-align: left;
-}
-
-.setting-action-copy {
-  display: grid;
-}
-
-.power-icon {
-  font-size: 1.05rem;
-  color: var(--accent);
-}
-
 .switch-row input {
   position: absolute;
   opacity: 0;
