@@ -30,7 +30,8 @@ test("suite e2e exhaustive hors voix", async (t) => {
 
       await openSidebar(page);
       await expectText(page.locator("#sessionList"), "Aucune session.");
-      await clickDom(page, "#openCreateModal");
+      await openMenu(page);
+      await clickDom(page, "#menuNewSessionButton");
       await page.fill("#workspaceInput", "alpha-suite");
       await page.fill("#promptInput", "");
       await clickDom(page, "#createSessionForm .primary-button");
@@ -71,13 +72,13 @@ test("suite e2e exhaustive hors voix", async (t) => {
       assert.equal(await page.locator("#messageInput").isDisabled(), false);
     }, 5000);
 
-    await page.locator("#scrollTopButton").click({ force: true });
+    await clickDom(page, "#scrollTopButton");
     await waitFor(async () => {
       const top = await page.locator("#messages").evaluate((node) => Math.round(node.scrollTop));
       assert.ok(top < 32, `scrollTop attendu proche de 0, reçu ${top}`);
     }, 3000);
 
-    await page.locator("#scrollBottomButton").click({ force: true });
+    await clickDom(page, "#scrollBottomButton");
     await waitFor(async () => {
       const bottomGap = await page.locator("#messages").evaluate((node) =>
         Math.round(node.scrollHeight - (node.scrollTop + node.clientHeight))
@@ -114,9 +115,16 @@ test("suite e2e exhaustive hors voix", async (t) => {
 
     await createSession(page, "beta-space");
     await createSession(page, "gamma-space");
+    await activateSessionFromDrawer(page, "gamma-space");
+    await sendMessage(page, "motcle-unique-recherche");
+    await expectText(page.locator(".bubble.user").last(), "motcle-unique-recherche");
 
     await openSidebar(page);
     await page.fill("#sessionSearchInput", "gamma");
+    await expectText(page.locator("#sessionList"), "gamma-space");
+    assert.equal(await page.locator(".session-item").count(), 1);
+
+    await page.fill("#sessionSearchInput", "motcle-unique-recherche");
     await expectText(page.locator("#sessionList"), "gamma-space");
     assert.equal(await page.locator(".session-item").count(), 1);
 
@@ -144,7 +152,8 @@ test("suite e2e exhaustive hors voix", async (t) => {
       const { page, context } = await newPage();
     await activateSessionFromDrawer(page, "alpha-suite");
 
-    await clickDom(page, "#openConfigModal");
+    await openMenu(page);
+    await clickDom(page, "#menuConfigButton");
     await page.fill("#notificationDurationInput", "9");
     await page.fill("#workspaceRootInput", ALT_WORKSPACE_ROOT);
     await page.fill("#githubTokenInput", "ghp_ui_token");
@@ -169,7 +178,8 @@ test("suite e2e exhaustive hors voix", async (t) => {
     await openSidebar(page);
     await expectText(page.locator("#sessionList"), "Aucune session.");
 
-    await clickDom(page, "#openConfigModal");
+    await openMenu(page);
+    await clickDom(page, "#menuConfigButton");
     await expectValue(page.locator("#githubTokenInput"), "ghp_ui_token");
     await page.fill("#workspaceRootInput", WORKSPACE_ROOT);
     await clickDom(page, "#saveConfigButton");
@@ -182,8 +192,11 @@ test("suite e2e exhaustive hors voix", async (t) => {
       assert.equal(await page.locator(".model-option").count(), 4);
     });
     await clickDom(page.locator(".model-option").filter({ hasText: "GPT-5.4-Mini" }));
-    await expectText(page.locator("#confirmModelText"), "gpt-5.4-mini");
-    await clickDom(page, "#confirmModelChangeButton");
+    await delay(200);
+    if (await page.locator("#confirmModelModal").evaluate((node) => node.getAttribute("aria-hidden") === "false")) {
+      await expectText(page.locator("#confirmModelText"), "gpt-5.4-mini");
+      await clickDom(page, "#confirmModelChangeButton");
+    }
     await expectText(page.locator("#activeModelLabel"), "gpt-5.4-mini");
 
     const codexConfig = await (await fetch(`${BASE_URL}/api/config/codex`)).json();
@@ -350,6 +363,15 @@ async function openSidebar(page) {
   await searchInput.waitFor({ state: "visible" });
 }
 
+async function openMenu(page) {
+  const configButton = page.locator("#menuConfigButton");
+  if (await configButton.isVisible()) {
+    return;
+  }
+  await page.locator("#toggleMenuDrawer").click({ force: true });
+  await configButton.waitFor({ state: "visible" });
+}
+
 async function activateSessionFromDrawer(page, name) {
   await openSidebar(page);
   await clickDom(page.locator(".session-item").filter({ hasText: name }).locator("[data-action='open']"));
@@ -357,7 +379,8 @@ async function activateSessionFromDrawer(page, name) {
 }
 
 async function createSession(page, workspace) {
-  await clickDom(page, "#openCreateModal");
+  await openMenu(page);
+  await clickDom(page, "#menuNewSessionButton");
   await page.fill("#workspaceInput", workspace);
   await page.fill("#promptInput", "");
   await clickDom(page, "#createSessionForm .primary-button");

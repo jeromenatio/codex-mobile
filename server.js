@@ -151,6 +151,24 @@ function registerRoutes() {
     res.json(buildBootstrap());
   });
 
+  app.get("/api/sessions/search", (req, res) => {
+    try {
+      const query = String(req.query?.q || "").trim();
+      if (!query) {
+        return res.json({ query: "", sessions: [] });
+      }
+
+      const sessions = database
+        .searchSessions(query, getWorkspaceRoot())
+        .map(sanitizeSession);
+
+      res.json({ query, sessions });
+    } catch (error) {
+      console.error("Failed to search sessions:", error);
+      res.status(500).json({ error: error.message || "Failed to search sessions" });
+    }
+  });
+
   app.get("/api/config/codex", async (_req, res) => {
     try {
       res.json(await readCodexConfigSettings());

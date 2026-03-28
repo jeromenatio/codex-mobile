@@ -74,6 +74,8 @@ const state = {
   pendingModelSlug: null,
   editingPromptId: null,
   sessionSearchTerm: "",
+  sessionSearchResults: null,
+  sessionSearchRequestId: 0,
   stt: {
     transcript: "",
     interim: "",
@@ -447,6 +449,10 @@ async function logout() {
 async function refreshBootstrap() {
   const response = await apiFetch("/api/bootstrap");
   state.bootstrap = await response.json();
+  if (state.sessionSearchTerm.trim()) {
+    state.sessionSearchResults = null;
+    void runSessionSearch(state.sessionSearchTerm);
+  }
   renderSessionList();
 }
 
@@ -510,13 +516,8 @@ function renderModelList() {
 
 function renderSessionList() {
   const sessions = state.bootstrap?.sessions || [];
-  const query = state.sessionSearchTerm.trim().toLocaleLowerCase("fr");
-  const filteredSessions = query
-    ? sessions.filter((session) => {
-        const haystack = `${session.name} ${session.workspaceName}`.toLocaleLowerCase("fr");
-        return haystack.includes(query);
-      })
-    : sessions;
+  const query = state.sessionSearchTerm.trim();
+  const filteredSessions = query ? state.sessionSearchResults || [] : sessions;
   const workspaces = [...new Set(filteredSessions.map((session) => session.workspaceName))];
 
   elements.sessionCount.textContent = `${filteredSessions.length} session${filteredSessions.length > 1 ? "s" : ""}`;
@@ -594,7 +595,46 @@ function renderSessionList() {
 
 function onSessionSearch(event) {
   state.sessionSearchTerm = String(event.target.value || "");
+  state.sessionSearchRequestId += 1;
+  const requestId = state.sessionSearchRequestId;
+  const query = state.sessionSearchTerm.trim();
+
+  if (!query) {
+    window.clearTimeout(onSessionSearch.timerId);
+    state.sessionSearchResults = null;
+    renderSessionList();
+    return;
+  }
+
+  window.clearTimeout(onSessionSearch.timerId);
+  onSessionSearch.timerId = window.setTimeout(() => {
+    void runSessionSearch(query, requestId);
+  }, 160);
   renderSessionList();
+}
+
+onSessionSearch.timerId = 0;
+
+async function runSessionSearch(query, requestId = state.sessionSearchRequestId) {
+  try {
+    const response = await apiFetch(`/api/sessions/search?q=${encodeURIComponent(query)}`);
+    if (!response.ok) {
+      throw new Error("search failed");
+    }
+    const payload = await response.json();
+    if (requestId !== state.sessionSearchRequestId) {
+      return;
+    }
+    state.sessionSearchResults = Array.isArray(payload.sessions) ? payload.sessions : [];
+    renderSessionList();
+  } catch {
+    if (requestId !== state.sessionSearchRequestId) {
+      return;
+    }
+    state.sessionSearchResults = [];
+    renderSessionList();
+    notify("error", "Recherche impossible.");
+  }
 }
 
 async function activateSession(sessionId) {
