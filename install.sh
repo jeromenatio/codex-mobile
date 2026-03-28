@@ -52,7 +52,11 @@ install_node_if_needed() {
     return
   fi
 
-  curl -fsSL https://deb.nodesource.com/setup_22.x | run_root -E bash -
+  if [[ "${EUID}" -eq 0 ]]; then
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  else
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+  fi
   run_root apt install -y nodejs
 }
 
@@ -165,10 +169,23 @@ ensure_codex_login() {
   fi
 
   rm -f /tmp/codex-mobile-login-status.txt
+  local login_args=()
+  if [[ -n "${SSH_CONNECTION:-}" && -z "${DISPLAY:-}" ]]; then
+    login_args=(--device-auth)
+  fi
+
   echo
   echo "Codex n'est pas connecte."
-  echo "La commande 'codex login' va etre lancee."
-  codex login
+  if [[ "${#login_args[@]}" -gt 0 ]]; then
+    echo "La commande 'codex login --device-auth' va etre lancee."
+  else
+    echo "La commande 'codex login' va etre lancee."
+  fi
+
+  if ! codex login "${login_args[@]}"; then
+    echo "Connexion Codex interrompue ou echouee." >&2
+    exit 1
+  fi
 }
 
 install_service_if_requested() {
