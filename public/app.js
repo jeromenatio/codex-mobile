@@ -21,6 +21,16 @@ const defaultQuickPrompts = [
     text: "Commit et push. Utilise le token GitHub se trouvant dans /etc/codex-mobile/.env. S'il n'existe pas encore de dépôt, crée-le d'abord.",
     locked: true,
   },
+  {
+    name: "Sécurisation serveur",
+    text: "Sécurise le serveur avec UFW. Ferme toutes les connexions entrantes par défaut, autorise toutes les connexions sortantes, puis ouvre uniquement les ports SSH, HTTP et HTTPS (22, 80, 443). Il est important d'ouvrir le port SSH avant d'activer UFW pour éviter de perdre l'accès au serveur.",
+    locked: true,
+  },
+  {
+    name: "Installation Caddy",
+    text: "Installe Caddy dans /etc/codex-mobile/caddy. Il sera utilisé comme reverse proxy pour gérer les redirections et les proxys vers les services locaux ou Docker. Configure-le pour gérer automatiquement les certificats TLS et leur renouvellement via Let's Encrypt.",
+    locked: true,
+  },
 ];
 
 function generateId() {
