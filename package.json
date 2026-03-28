@@ -4,7 +4,8 @@
   "description": "Mobile-first Codex session manager",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "init-db": "node scripts/init-db.js",
+    "start": "npm run init-db && node server.js",
     "test:e2e": "node --test tests/e2e.test.mjs"
   },
   "keywords": [],

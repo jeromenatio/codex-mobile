@@ -66,13 +66,18 @@ test("suite e2e exhaustive hors voix", async (t) => {
       await expectText(page.locator(".bubble.assistant").last(), "Réponse longue");
     }
 
-    await clickDom(page, "#scrollTopButton");
+    await waitFor(async () => {
+      assert.equal(await page.locator("#sendButton").getAttribute("aria-label"), "Envoyer");
+      assert.equal(await page.locator("#messageInput").isDisabled(), false);
+    }, 5000);
+
+    await page.locator("#scrollTopButton").click({ force: true });
     await waitFor(async () => {
       const top = await page.locator("#messages").evaluate((node) => Math.round(node.scrollTop));
       assert.ok(top < 32, `scrollTop attendu proche de 0, reçu ${top}`);
     }, 3000);
 
-    await clickDom(page, "#scrollBottomButton");
+    await page.locator("#scrollBottomButton").click({ force: true });
     await waitFor(async () => {
       const bottomGap = await page.locator("#messages").evaluate((node) =>
         Math.round(node.scrollHeight - (node.scrollTop + node.clientHeight))
@@ -155,6 +160,12 @@ test("suite e2e exhaustive hors voix", async (t) => {
     assert.equal(currentTheme, "arctic-glass");
     assert.equal(fs.existsSync(ALT_WORKSPACE_ROOT), true);
 
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.locator("#messageInput").waitFor({ state: "visible" });
+    await waitFor(async () => {
+      assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "arctic-glass");
+    }, 5000);
+
     await openSidebar(page);
     await expectText(page.locator("#sessionList"), "Aucune session.");
 
@@ -162,6 +173,7 @@ test("suite e2e exhaustive hors voix", async (t) => {
     await expectValue(page.locator("#githubTokenInput"), "ghp_ui_token");
     await page.fill("#workspaceRootInput", WORKSPACE_ROOT);
     await clickDom(page, "#saveConfigButton");
+    await expectText(page.locator("#notifications"), "Configuration enregistree");
     await openSidebar(page);
     await expectText(page.locator("#sessionList"), "alpha-suite");
 
@@ -236,6 +248,14 @@ test("suite e2e exhaustive hors voix", async (t) => {
     await clickDom(page, "#openPromptModal");
     await clickDom(page.locator(".prompt-item").filter({ hasText: "Résumé" }).locator("[data-prompt-action='delete']"));
     await expectText(page.locator("#promptList"), "Commit & push");
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.locator("#messageInput").waitFor({ state: "visible" });
+    await clickDom(page, "#openPromptModal");
+    await expectText(page.locator("#promptList"), "Installation Caddy");
+    await waitFor(async () => {
+      assert.equal((await page.locator("#promptList").innerText()).includes("Résumé"), false);
+    });
 
     await context.close();
     });
@@ -348,8 +368,10 @@ async function sendMessage(page, text) {
   await waitFor(async () => {
     const label = await page.locator("#sendButton").getAttribute("aria-label");
     const disabled = await page.locator("#messageInput").isDisabled();
+    const pendingCount = await page.locator(".bubble.assistant.pending").count();
     assert.equal(label, "Envoyer");
     assert.equal(disabled, false);
+    assert.equal(pendingCount, 0);
   }, 5000);
   await page.fill("#messageInput", text);
   await clickDom(page, "#sendButton");

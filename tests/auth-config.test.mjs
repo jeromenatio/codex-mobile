@@ -51,6 +51,16 @@ test("auth et configuration app", async () => {
     assert.equal(initialConfig.workspaceRoot, WORKSPACE_ROOT);
     assert.equal(initialConfig.githubToken, INITIAL_GITHUB_TOKEN);
 
+    response = await fetch(`${BASE_URL}/api/ui-state`, {
+      headers: { cookie },
+    });
+    assert.equal(response.status, 200);
+    const initialUiState = await response.json();
+    assert.equal(initialUiState.theme, "sandstone");
+    assert.equal(initialUiState.notificationDurationSeconds, 5);
+    assert.equal(Array.isArray(initialUiState.prompts), true);
+    assert.match(initialUiState.prompts.map((item) => item.name).join(" | "), /Commit & push/);
+
     const nextRoot = path.join(TMP_ROOT, "workspaces-alt");
     const nextGithubToken = "ghp_updated_test_token";
     response = await fetch(`${BASE_URL}/api/config/app`, {
@@ -66,6 +76,34 @@ test("auth et configuration app", async () => {
     assert.equal(updatedConfig.workspaceRoot, nextRoot);
     assert.equal(updatedConfig.githubToken, nextGithubToken);
     assert.equal(fs.existsSync(nextRoot), true);
+
+    response = await fetch(`${BASE_URL}/api/ui-state`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({
+        theme: "arctic-glass",
+        notificationDurationSeconds: 9,
+        lastSessionId: "session-test-id",
+        prompts: [
+          ...initialUiState.prompts,
+          {
+            id: "custom-prompt-id",
+            name: "Résumé",
+            text: "Fais un résumé concis.",
+            locked: false,
+          },
+        ],
+      }),
+    });
+    assert.equal(response.status, 200);
+    const updatedUiState = await response.json();
+    assert.equal(updatedUiState.theme, "arctic-glass");
+    assert.equal(updatedUiState.notificationDurationSeconds, 9);
+    assert.equal(updatedUiState.lastSessionId, "session-test-id");
+    assert.match(updatedUiState.prompts.map((item) => item.name).join(" | "), /Résumé/);
 
     const envText = await fsp.readFile(ENV_FILE, "utf8");
     assert.match(envText, /^GITHUB_TOKEN=ghp_updated_test_token$/m);

@@ -52,7 +52,7 @@ WorkingDirectory=${APP_DIR}
 Environment=NODE_ENV=production
 Environment=PORT=${PORT}
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=${NODE_BIN} ${APP_DIR}/server.js
+ExecStart=${NPM_BIN} start
 Restart=always
 RestartSec=3
 TimeoutStopSec=15

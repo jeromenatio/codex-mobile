@@ -3,3 +3,6 @@ data/
 workspaces/
 mobile-check.png
 npm-debug.log*
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

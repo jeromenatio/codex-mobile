@@ -7,6 +7,12 @@ const http = require("http");
 const { spawn, spawnSync } = require("child_process");
 const readline = require("readline");
 const WebSocket = require("ws");
+const {
+  createDatabase,
+  DEFAULT_NOTIFICATION_DURATION_SECONDS,
+  DEFAULT_QUICK_PROMPTS,
+  DEFAULT_THEME,
+} = require("./lib/database");
 
 loadEnvFile(process.env.CODEX_MOBILE_ENV_FILE || "/etc/codex-mobile/.env");
 
@@ -16,7 +22,8 @@ const TEST_MODE = process.env.CODEX_MOBILE_TEST_MODE === "1";
 const FORCE_AUTH = process.env.CODEX_MOBILE_FORCE_AUTH === "1";
 const DISABLE_EXTERNAL_SYNC = TEST_MODE || process.env.CODEX_MOBILE_DISABLE_EXTERNAL_SYNC === "1";
 const DATA_DIR = process.env.CODEX_MOBILE_DATA_DIR || path.join(ROOT_DIR, "data");
-const STATE_FILE = path.join(DATA_DIR, "state.json");
+const STATE_FILE = process.env.CODEX_MOBILE_STATE_FILE || path.join(DATA_DIR, "state.json");
+const DB_FILE = process.env.CODEX_MOBILE_DB_FILE || path.join(DATA_DIR, "codex-mobile.sqlite");
 const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
 const DEFAULT_WORKSPACE_ROOT = process.env.CODEX_MOBILE_DEFAULT_WORKSPACE_ROOT || "/projects";
 const CODEX_CONFIG_FILE = process.env.CODEX_MOBILE_CONFIG_FILE || "/root/.codex/config.toml";
@@ -44,7 +51,8 @@ app.use(express.static(path.join(ROOT_DIR, "public"), {
 
 const runtimes = new Map();
 const authSessions = new Map();
-let persistedState = loadState();
+const database = createDatabase(DB_FILE, DEFAULT_WORKSPACE_ROOT, STATE_FILE);
+let persistedState = database.loadState();
 
 boot().catch((error) => {
   console.error("Boot failed:", error);
@@ -59,6 +67,7 @@ async function boot() {
   persistedState.lastSessionId = persistedState.lastSessionId || null;
   persistedState.hiddenSessionIds = Array.isArray(persistedState.hiddenSessionIds) ? persistedState.hiddenSessionIds : [];
   persistedState.appConfig = normalizeAppConfig(persistedState.appConfig);
+  persistedState.uiState = normalizeUiState(persistedState.uiState);
   await fsp.mkdir(getWorkspaceRoot(), { recursive: true });
 
   let changed = false;
@@ -158,6 +167,15 @@ function registerRoutes() {
     });
   });
 
+  app.get("/api/ui-state", (_req, res) => {
+    res.json({
+      theme: persistedState.uiState.theme,
+      notificationDurationSeconds: persistedState.uiState.notificationDurationSeconds,
+      prompts: persistedState.uiState.prompts,
+      lastSessionId: persistedState.lastSessionId || null,
+    });
+  });
+
   app.put("/api/config/app", async (req, res) => {
     try {
       const workspaceRoot = normalizeWorkspaceRoot(req.body?.workspaceRoot);
@@ -175,6 +193,34 @@ function registerRoutes() {
     } catch (error) {
       console.error("Failed to update app config:", error);
       res.status(500).json({ error: error.message || "Failed to update app config" });
+    }
+  });
+
+  app.put("/api/ui-state", async (req, res) => {
+    try {
+      const nextState = {
+        theme: req.body?.theme ?? persistedState.uiState.theme,
+        notificationDurationSeconds:
+          req.body?.notificationDurationSeconds ?? persistedState.uiState.notificationDurationSeconds,
+        prompts: req.body?.prompts ?? persistedState.uiState.prompts,
+      };
+
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, "lastSessionId")) {
+        const incoming = String(req.body?.lastSessionId || "").trim();
+        persistedState.lastSessionId = incoming || null;
+      }
+
+      persistedState.uiState = normalizeUiState(nextState);
+      await saveState();
+      res.json({
+        theme: persistedState.uiState.theme,
+        notificationDurationSeconds: persistedState.uiState.notificationDurationSeconds,
+        prompts: persistedState.uiState.prompts,
+        lastSessionId: persistedState.lastSessionId || null,
+      });
+    } catch (error) {
+      console.error("Failed to update UI state:", error);
+      res.status(500).json({ error: error.message || "Failed to update UI state" });
     }
   });
 
@@ -380,6 +426,7 @@ async function createSession(workspaceLabel, initialPrompt) {
     workspaceId: workspace.id,
     workspaceName: workspace.name,
     workspacePath: workspace.path,
+    workspaceRoot: getWorkspaceRoot(),
     createdAt,
     updatedAt: createdAt,
     status: "idle",
@@ -744,18 +791,6 @@ function broadcastToSession(sessionId, message) {
     if (client.readyState === WebSocket.OPEN) {
       client.send(payload);
     }
-  }
-}
-
-function loadState() {
-  try {
-    if (!fs.existsSync(STATE_FILE)) {
-      return { sessions: [], lastSessionId: null, hiddenSessionIds: [], appConfig: { workspaceRoot: DEFAULT_WORKSPACE_ROOT } };
-    }
-    return JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
-  } catch (error) {
-    console.error("Failed to load state:", error);
-    return { sessions: [], lastSessionId: null, hiddenSessionIds: [], appConfig: { workspaceRoot: DEFAULT_WORKSPACE_ROOT } };
   }
 }
 
@@ -1218,6 +1253,7 @@ function syncExternalCodexSessions() {
       existing.workspaceId = existing.workspaceId || thread.workspaceId;
       existing.workspaceName = existing.workspaceName || thread.workspaceName;
       existing.workspacePath = existing.workspacePath || thread.workspacePath;
+      existing.workspaceRoot = existing.workspaceRoot || getWorkspaceRoot();
       existing.name = existing.name || thread.name;
       existing.createdAt = existing.createdAt || thread.createdAt;
       existing.updatedAt = newerIso(existing.updatedAt, thread.updatedAt);
@@ -1233,6 +1269,7 @@ function syncExternalCodexSessions() {
       workspaceId: thread.workspaceId,
       workspaceName: thread.workspaceName,
       workspacePath: thread.workspacePath,
+      workspaceRoot: getWorkspaceRoot(),
       createdAt: thread.createdAt,
       updatedAt: thread.updatedAt,
       status: "idle",
@@ -1402,8 +1439,9 @@ print(row[0] if row else "")
 let savePromise = Promise.resolve();
 function saveState() {
   savePromise = savePromise.then(async () => {
-    await fsp.mkdir(DATA_DIR, { recursive: true });
-    await fsp.writeFile(STATE_FILE, JSON.stringify(persistedState, null, 2));
+    persistedState.uiState = normalizeUiState(persistedState.uiState);
+    persistedState.appConfig = normalizeAppConfig(persistedState.appConfig);
+    await database.saveState(persistedState);
   });
   return savePromise;
 }
@@ -1421,6 +1459,43 @@ function normalizeAppConfig(config) {
   return {
     workspaceRoot: normalizeWorkspaceRoot(config?.workspaceRoot),
   };
+}
+
+function normalizeUiState(uiState) {
+  const prompts = Array.isArray(uiState?.prompts)
+    ? uiState.prompts
+        .map((prompt) => ({
+          id: String(prompt.id || crypto.randomUUID()),
+          name: String(prompt.name || "").trim(),
+          text: String(prompt.text || ""),
+          locked: Boolean(prompt.locked),
+        }))
+        .filter((prompt) => prompt.name)
+    : [];
+
+  for (const item of DEFAULT_QUICK_PROMPTS) {
+    const index = prompts.findIndex((prompt) => prompt.name.trim().toLowerCase() === item.name.trim().toLowerCase());
+    if (index === -1) {
+      prompts.push({ id: crypto.randomUUID(), ...item });
+      continue;
+    }
+    prompts[index].locked = true;
+    prompts[index].text = item.text;
+  }
+
+  return {
+    theme: String(uiState?.theme || DEFAULT_THEME).trim() || DEFAULT_THEME,
+    notificationDurationSeconds: clampNotificationDuration(uiState?.notificationDurationSeconds),
+    prompts,
+  };
+}
+
+function clampNotificationDuration(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds)) {
+    return DEFAULT_NOTIFICATION_DURATION_SECONDS;
+  }
+  return Math.min(30, Math.max(1, Math.round(seconds)));
 }
 
 function normalizeWorkspaceRoot(value) {

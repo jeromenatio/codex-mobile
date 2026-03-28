@@ -126,36 +126,16 @@ GITHUB_TOKEN=${existing_github}
 EOF"
 }
 
-write_initial_state() {
+initialize_database() {
   run_root mkdir -p "${APP_DIR}/data"
-  WORKSPACE_ROOT="${WORKSPACE_ROOT}" APP_DIR="${APP_DIR}" node <<'EOF'
-const fs = require("fs");
-const path = require("path");
-
-const appDir = process.env.APP_DIR;
-const workspaceRoot = process.env.WORKSPACE_ROOT;
-const stateFile = path.join(appDir, "data", "state.json");
-let state = {
-  sessions: [],
-  lastSessionId: null,
-  hiddenSessionIds: [],
-  appConfig: { workspaceRoot },
-};
-
-if (fs.existsSync(stateFile)) {
-  try {
-    state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-  } catch {}
-}
-
-state.sessions = Array.isArray(state.sessions) ? state.sessions : [];
-state.lastSessionId = state.lastSessionId || null;
-state.hiddenSessionIds = Array.isArray(state.hiddenSessionIds) ? state.hiddenSessionIds : [];
-state.appConfig = { workspaceRoot };
-
-fs.writeFileSync(stateFile, JSON.stringify(state, null, 2) + "\n");
-EOF
-  run_root mkdir -p "${WORKSPACE_ROOT}"
+  (
+    cd "${APP_DIR}"
+    run_root mkdir -p "${WORKSPACE_ROOT}"
+    run_root env \
+      CODEX_MOBILE_DATA_DIR="${APP_DIR}/data" \
+      CODEX_MOBILE_DEFAULT_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
+      node ./scripts/init-db.js
+  )
 }
 
 ensure_codex_login() {
@@ -209,7 +189,7 @@ main() {
   install_project_dependencies
   prompt_workspace_root
   write_env_file
-  write_initial_state
+  initialize_database
   ensure_codex_login
   install_service_if_requested
 

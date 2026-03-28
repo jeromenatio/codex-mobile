@@ -1,7 +1,5 @@
 import { marked } from "/assets/marked/marked.esm.js";
 
-const storageKey = "codex-mobile:last-session";
-const settingsKey = "codex-mobile:settings";
 const themes = [
   "sandstone",
   "ivory-forest",
@@ -55,7 +53,7 @@ const state = {
     authenticated: false,
     bootstrapped: false,
   },
-  settings: loadSettings(),
+  settings: defaultSettings(),
   appConfig: {
     workspaceRoot: "/projects",
     githubToken: "",
@@ -91,6 +89,8 @@ const state = {
     restartTimerId: null,
   },
 };
+
+let settingsSavePromise = Promise.resolve();
 
 const elements = {
   authGate: document.getElementById("authGate"),
@@ -225,6 +225,11 @@ async function bootstrapApp() {
     await refreshAppConfig();
   } catch (error) {
     console.warn("App config bootstrap failed:", error);
+  }
+  try {
+    await refreshUiState();
+  } catch (error) {
+    console.warn("UI state bootstrap failed:", error);
   }
   await refreshBootstrap();
   const targetSessionId = pickSessionId();
@@ -450,6 +455,16 @@ async function refreshAppConfig() {
   state.appConfig = await response.json();
 }
 
+async function refreshUiState() {
+  const response = await apiFetch("/api/ui-state");
+  if (!response.ok) {
+    throw new Error("Impossible de charger l'état d'interface.");
+  }
+  const payload = await response.json();
+  state.settings = normalizeSettings(payload);
+  applyTheme(state.settings.theme);
+}
+
 function renderModelTrigger() {
   elements.activeModelLabel.textContent = state.codexConfig.model || "gpt-5.4";
 }
@@ -580,11 +595,11 @@ async function activateSession(sessionId) {
   state.activeSessionId = sessionId;
   state.messages = [];
   clearComposer();
-  localStorage.setItem(storageKey, sessionId);
   updateHeader(session);
   renderSessionList();
   renderMessages();
   await connectSocket(sessionId);
+  void persistSettings({ lastSessionId: sessionId });
 }
 
 function connectSocket(sessionId) {
@@ -771,7 +786,7 @@ function renderMessages(shouldScroll = false) {
     });
   }
 
-  if (shouldScroll || true) {
+  if (shouldScroll) {
     elements.messages.scrollTop = elements.messages.scrollHeight;
   }
 }
@@ -817,13 +832,7 @@ function pickSessionId() {
   if (!sessions.length) {
     return null;
   }
-
-  const local = localStorage.getItem(storageKey);
   const server = state.bootstrap.lastSessionId;
-
-  if (local && sessions.some((item) => item.id === local)) {
-    return local;
-  }
   if (server && sessions.some((item) => item.id === server)) {
     return server;
   }
@@ -881,7 +890,7 @@ async function openConfigModal() {
   closeRenameModal();
   closeDeleteModal();
   try {
-    await Promise.all([refreshCodexConfig(), refreshAppConfig()]);
+    await Promise.all([refreshCodexConfig(), refreshAppConfig(), refreshUiState()]);
   } catch {
     notify("error", "Chargement de la configuration impossible.");
     return;
@@ -1543,13 +1552,22 @@ async function applyModelChange(slug) {
 }
 
 function scrollConversationTop() {
-  elements.messages.scrollTo({ top: 0, behavior: "smooth" });
-  elements.messages.scrollTop = 0;
+  enforceConversationScroll(0);
 }
 
 function scrollConversationBottom() {
-  elements.messages.scrollTo({ top: elements.messages.scrollHeight, behavior: "smooth" });
-  elements.messages.scrollTop = elements.messages.scrollHeight;
+  enforceConversationScroll(elements.messages.scrollHeight);
+}
+
+function enforceConversationScroll(top) {
+  elements.messages.scrollTo({ top, behavior: "smooth" });
+  elements.messages.scrollTop = top;
+  window.requestAnimationFrame(() => {
+    elements.messages.scrollTop = top;
+  });
+  window.setTimeout(() => {
+    elements.messages.scrollTop = top;
+  }, 0);
 }
 
 async function onRenameSession(event) {
@@ -1782,7 +1800,7 @@ function readFileAsDataUrl(file) {
 
 async function onSaveConfig(event) {
   event.preventDefault();
-  const theme = normalizeTheme(state.settings.theme || elements.themeValueInput.value || elements.themeSelect.value);
+  const theme = normalizeTheme(elements.themeValueInput.value || elements.themeSelect.value || state.settings.theme);
   const seconds = clampDuration(elements.notificationDurationInput.value);
   const workspaceRoot = String(elements.workspaceRootInput.value || "").trim() || "/projects";
   const githubToken = String(elements.githubTokenInput.value || "").trim();
@@ -1827,14 +1845,9 @@ async function onSaveConfig(event) {
 
   state.settings.theme = theme;
   state.settings.notificationDurationSeconds = seconds;
-  persistSettings();
+  await persistSettings({ lastSessionId: state.activeSessionId });
   applyTheme(theme);
-  state.bootstrap = appConfigPayload.bootstrap || state.bootstrap;
-  if (!state.bootstrap) {
-    await refreshBootstrap();
-  } else {
-    renderSessionList();
-  }
+  await refreshBootstrap();
   const targetSessionId = pickSessionId();
   if (targetSessionId) {
     await activateSession(targetSessionId);
@@ -1850,33 +1863,60 @@ async function onSaveConfig(event) {
   notify("success", `Configuration enregistree. Notifications a ${seconds}s.`);
 }
 
-function loadSettings() {
-  try {
-    const raw = localStorage.getItem(settingsKey);
-    const parsed = raw ? JSON.parse(raw) : {};
-    const prompts = Array.isArray(parsed.prompts)
-      ? parsed.prompts
-          .filter((item) => item && typeof item.name === "string" && typeof item.text === "string")
-          .map((item) => ({
-              id: typeof item.id === "string" && item.id ? item.id : generateId(),
-              name: item.name.trim(),
-              text: item.text.trim(),
-              locked: Boolean(item.locked),
-            }))
-          .filter((item) => item.name && item.text)
-      : [];
-    return {
-      theme: normalizeTheme(parsed.theme),
-      notificationDurationSeconds: clampDuration(parsed.notificationDurationSeconds),
-      prompts: withDefaultQuickPrompts(prompts),
-    };
-  } catch {
-    return { theme: "sandstone", notificationDurationSeconds: 5, prompts: withDefaultQuickPrompts([]) };
-  }
+function defaultSettings() {
+  return { theme: "sandstone", notificationDurationSeconds: 5, prompts: withDefaultQuickPrompts([]) };
 }
 
-function persistSettings() {
-  localStorage.setItem(settingsKey, JSON.stringify(state.settings));
+function normalizeSettings(payload = {}) {
+  const prompts = Array.isArray(payload.prompts)
+    ? payload.prompts
+        .filter((item) => item && typeof item.name === "string" && typeof item.text === "string")
+        .map((item) => ({
+          id: typeof item.id === "string" && item.id ? item.id : generateId(),
+          name: item.name.trim(),
+          text: item.text.trim(),
+          locked: Boolean(item.locked),
+        }))
+        .filter((item) => item.name && item.text)
+    : [];
+
+  return {
+    theme: normalizeTheme(payload.theme),
+    notificationDurationSeconds: clampDuration(payload.notificationDurationSeconds),
+    prompts: withDefaultQuickPrompts(prompts),
+  };
+}
+
+function persistSettings({ lastSessionId } = {}) {
+  const payload = {
+    theme: state.settings.theme,
+    notificationDurationSeconds: state.settings.notificationDurationSeconds,
+    prompts: state.settings.prompts,
+  };
+
+  if (typeof lastSessionId !== "undefined") {
+    payload.lastSessionId = lastSessionId;
+  }
+
+  settingsSavePromise = settingsSavePromise
+    .catch(() => {})
+    .then(async () => {
+      const response = await apiFetch("/api/ui-state", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        throw new Error("Sauvegarde de l'état d'interface impossible.");
+      }
+      const saved = await response.json();
+      state.settings = normalizeSettings(saved);
+    })
+    .catch((error) => {
+      console.warn(error);
+    });
+
+  return settingsSavePromise;
 }
 
 function withDefaultQuickPrompts(prompts) {
