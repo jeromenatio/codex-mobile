@@ -101,9 +101,14 @@ const elements = {
   openModelModal: document.getElementById("openModelModal"),
   activeModelLabel: document.getElementById("activeModelLabel"),
   logoutButton: document.getElementById("logoutButton"),
-  openConfigModal: document.getElementById("openConfigModal"),
   scrollTopButton: document.getElementById("scrollTopButton"),
   scrollBottomButton: document.getElementById("scrollBottomButton"),
+  toggleMenuDrawer: document.getElementById("toggleMenuDrawer"),
+  menuDrawer: document.getElementById("menuDrawer"),
+  closeMenuDrawer: document.getElementById("closeMenuDrawer"),
+  menuNewSessionButton: document.getElementById("menuNewSessionButton"),
+  menuConfigButton: document.getElementById("menuConfigButton"),
+  menuExportSessionButton: document.getElementById("menuExportSessionButton"),
   closeConfigModal: document.getElementById("closeConfigModal"),
   saveConfigButton: document.getElementById("saveConfigButton"),
   cancelConfigModal: document.getElementById("cancelConfigModal"),
@@ -165,7 +170,6 @@ const elements = {
   cancelDeleteModal: document.getElementById("cancelDeleteModal"),
   confirmDeleteButton: document.getElementById("confirmDeleteButton"),
   deleteModalText: document.getElementById("deleteModalText"),
-  openCreateModal: document.getElementById("openCreateModal"),
   closeCreateModal: document.getElementById("closeCreateModal"),
   cancelCreateModal: document.getElementById("cancelCreateModal"),
   closeSidebar: document.getElementById("closeSidebar"),
@@ -282,7 +286,13 @@ function bindEvents() {
   elements.cancelConfirmModelModal.addEventListener("click", closeConfirmModelModal);
   elements.confirmModelBackdrop.addEventListener("click", closeConfirmModelModal);
   elements.confirmModelChangeButton.addEventListener("click", confirmModelChange);
-  elements.openConfigModal.addEventListener("click", openConfigModal);
+  elements.toggleMenuDrawer.addEventListener("click", toggleMenuDrawer);
+  elements.closeMenuDrawer?.addEventListener("click", closeMenuDrawer);
+  elements.menuNewSessionButton.addEventListener("click", openCreateModal);
+  elements.menuConfigButton.addEventListener("click", openConfigModal);
+  elements.menuExportSessionButton.addEventListener("click", () => {
+    void exportActiveSession();
+  });
   elements.scrollTopButton.addEventListener("click", scrollConversationTop);
   elements.scrollBottomButton.addEventListener("click", scrollConversationBottom);
   elements.closeConfigModal.addEventListener("click", closeConfigModal);
@@ -300,7 +310,6 @@ function bindEvents() {
   elements.cancelDeleteModal.addEventListener("click", closeDeleteModal);
   elements.deleteBackdrop.addEventListener("click", closeDeleteModal);
   elements.confirmDeleteButton.addEventListener("click", onDeleteSession);
-  elements.openCreateModal.addEventListener("click", openCreateModal);
   elements.closeCreateModal.addEventListener("click", closeCreateModal);
   elements.cancelCreateModal.addEventListener("click", closeCreateModal);
   elements.modalBackdrop.addEventListener("click", closeCreateModal);
@@ -322,6 +331,7 @@ function bindEvents() {
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       closeCreateModal();
+      closeMenuDrawer();
       closeConfigModal();
       closePromptModal();
       closePromptEditorModal();
@@ -332,6 +342,7 @@ function bindEvents() {
       closeRenameModal();
       closeDeleteModal();
       closeSidebar();
+      closeMenuDrawer();
     }
   });
 }
@@ -428,6 +439,7 @@ async function logout() {
   try {
     await fetch("/api/auth/logout", { method: "POST" });
   } catch {}
+  closeMenuDrawer();
   handleUnauthorized();
   notify("success", "Déconnecté.");
 }
@@ -860,6 +872,7 @@ function autoResizeMessageInput() {
 
 function openCreateModal() {
   closeSidebar();
+  closeMenuDrawer();
   closeConfigModal();
   closePromptModal();
   void closeSttModal();
@@ -881,6 +894,7 @@ function closeCreateModal() {
 
 async function openConfigModal() {
   closeSidebar();
+  closeMenuDrawer();
   closeCreateModal();
   closePromptModal();
   closeImageModal();
@@ -927,6 +941,7 @@ function syncThemeSelectionValue() {
 
 async function openModelModal() {
   closeSidebar();
+  closeMenuDrawer();
   closeCreateModal();
   closeConfigModal();
   closePromptModal();
@@ -948,6 +963,7 @@ async function openModelModal() {
 
 function openPromptModal() {
   closeSidebar();
+  closeMenuDrawer();
   closeCreateModal();
   closeConfigModal();
   closeImageModal();
@@ -1471,6 +1487,7 @@ function closeRenameModal() {
 
 function openDeleteModal(session) {
   closeSidebar();
+  closeMenuDrawer();
   closeCreateModal();
   closeConfigModal();
   closeRenameModal();
@@ -1487,11 +1504,52 @@ function closeDeleteModal() {
 }
 
 function toggleSidebar() {
+  closeMenuDrawer();
   elements.sidebar.classList.toggle("open");
 }
 
 function closeSidebar() {
   elements.sidebar.classList.remove("open");
+}
+
+function toggleMenuDrawer() {
+  closeSidebar();
+  elements.menuDrawer.classList.toggle("open");
+}
+
+function closeMenuDrawer() {
+  elements.menuDrawer.classList.remove("open");
+}
+
+async function exportActiveSession() {
+  closeMenuDrawer();
+  const session = getActiveSession();
+  if (!state.activeSessionId || !session) {
+    notify("warning", "Aucune session active à exporter.");
+    return;
+  }
+
+  const response = await apiFetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/export`);
+  if (!response.ok) {
+    notify("error", "Export impossible.");
+    return;
+  }
+
+  const payload = await response.json();
+  const sessionName = slugifyFileName(payload?.session?.name || "session");
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${sessionName || "session"}.json`;
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  anchor.click();
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url);
+    anchor.remove();
+  }, 1000);
+  notify("success", "Session exportée.");
 }
 
 async function requestModelChange(slug) {
@@ -1721,6 +1779,15 @@ function notificationLabel(type) {
   if (type === "warning") return "Attention";
   if (type === "success") return "Succes";
   return "Info";
+}
+
+function slugifyFileName(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/[-\s]+/g, "-");
 }
 
 async function onPickImages(event) {

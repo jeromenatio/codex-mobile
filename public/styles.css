@@ -884,6 +884,63 @@ textarea {
   overflow: hidden;
 }
 
+.menu-card {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.menu-list {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  align-content: start;
+}
+
+.menu-footer {
+  margin-top: auto;
+}
+
+.menu-action {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--panel-soft);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-action i {
+  font-size: 1rem;
+  color: var(--ink-soft);
+}
+
+.menu-copy {
+  min-width: 0;
+  display: grid;
+}
+
+.menu-copy strong {
+  display: block;
+  min-width: 0;
+}
+
+.menu-action-danger {
+  border-color: color-mix(in srgb, var(--accent) 20%, var(--line));
+}
+
+.menu-action-danger i {
+  color: var(--accent);
+}
+
 .section-title,
 .session-row {
   display: flex;

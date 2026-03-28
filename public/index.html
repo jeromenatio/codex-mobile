@@ -41,14 +41,11 @@
           <button id="scrollBottomButton" class="icon-button plain-button" type="button" aria-label="Aller en bas de la conversation">
             <i class="bi bi-arrow-down icon-glyph" aria-hidden="true"></i>
           </button>
-          <button id="openCreateModal" class="icon-button plain-button" type="button" aria-label="Créer une session">
-            <i class="bi bi-plus-lg icon-glyph" aria-hidden="true"></i>
-          </button>
           <button id="toggleSidebar" class="icon-button plain-button" type="button" aria-label="Ouvrir les sessions">
             <i class="bi bi-chat-left-text-fill icon-glyph" aria-hidden="true"></i>
           </button>
-          <button id="openConfigModal" class="icon-button plain-button" type="button" aria-label="Configuration">
-            <i class="bi bi-gear-fill icon-glyph" aria-hidden="true"></i>
+          <button id="toggleMenuDrawer" class="icon-button plain-button" type="button" aria-label="Ouvrir le menu">
+            <i class="bi bi-list icon-glyph" aria-hidden="true"></i>
           </button>
         </div>
       </header>
@@ -86,6 +83,50 @@
         </section>
       </aside>
 
+      <aside id="menuDrawer" class="sidebar menu-drawer">
+        <section class="card menu-card">
+          <div class="sidebar-header">
+            <div class="section-title sidebar-title sidebar-header-top">
+              <h2 class="sidebar-heading">
+                <i class="bi bi-list" aria-hidden="true"></i>
+                <span>Menu</span>
+              </h2>
+              <button id="closeMenuDrawer" class="icon-button plain-button mobile-only" type="button" aria-label="Fermer le menu">
+                <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
+              </button>
+            </div>
+          </div>
+          <div class="menu-list">
+            <button id="menuNewSessionButton" class="menu-action" type="button">
+              <span class="menu-copy">
+                <strong>Nouvelle session</strong>
+              </span>
+              <i class="bi bi-plus-lg" aria-hidden="true"></i>
+            </button>
+            <button id="menuConfigButton" class="menu-action" type="button">
+              <span class="menu-copy">
+                <strong>Configuration</strong>
+              </span>
+              <i class="bi bi-gear-fill" aria-hidden="true"></i>
+            </button>
+            <button id="menuExportSessionButton" class="menu-action" type="button">
+              <span class="menu-copy">
+                <strong>Export session</strong>
+              </span>
+              <i class="bi bi-download" aria-hidden="true"></i>
+            </button>
+          </div>
+          <div class="sidebar-footer menu-footer">
+            <button id="logoutButton" class="menu-action menu-action-danger" type="button" aria-label="Déconnexion">
+              <span class="menu-copy">
+                <strong>Déconnexion</strong>
+              </span>
+              <i class="bi bi-power" aria-hidden="true"></i>
+            </button>
+          </div>
+        </section>
+      </aside>
+
       <main class="chat-shell">
         <section id="messages" class="messages"></section>
       </main>
@@ -116,7 +157,6 @@
           </div>
         </form>
       </section>
-
       <section id="notifications" class="notifications" aria-live="polite" aria-atomic="true"></section>
 
       <section id="createModal" class="modal-layer" aria-hidden="true">

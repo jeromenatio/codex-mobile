@@ -259,6 +259,24 @@ function registerRoutes() {
     }
   });
 
+  app.get("/api/sessions/:sessionId/export", async (req, res) => {
+    try {
+      const session = findSession(req.params.sessionId);
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+
+      await hydrateSessionMessages(session);
+      res.json({
+        exportedAt: new Date().toISOString(),
+        session: serializeSessionForExport(session),
+      });
+    } catch (error) {
+      console.error("Failed to export session:", error);
+      res.status(500).json({ error: error.message || "Failed to export session" });
+    }
+  });
+
   app.patch("/api/sessions/:sessionId", async (req, res) => {
     try {
       const session = findSession(req.params.sessionId);
@@ -769,6 +787,30 @@ function sanitizeSession(session) {
     status: runtimes.get(session.id)?.process ? "running" : session.status,
     threadId: session.threadId || null,
     messageCount: session.messages.length,
+  };
+}
+
+function serializeSessionForExport(session) {
+  return {
+    id: session.id,
+    name: session.name || session.workspaceName,
+    workspaceId: session.workspaceId,
+    workspaceName: session.workspaceName,
+    workspacePath: session.workspacePath,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    status: session.status,
+    threadId: session.threadId || null,
+    messages: Array.isArray(session.messages)
+      ? session.messages.map((message) => ({
+          id: message.id,
+          role: message.role,
+          text: message.text,
+          attachments: Array.isArray(message.attachments) ? message.attachments : [],
+          pending: Boolean(message.pending),
+          createdAt: message.createdAt,
+        }))
+      : [],
   };
 }
 
