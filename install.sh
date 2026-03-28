@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'echo; echo "Installation interrompue." >&2; exit 130' INT TERM
 
 REPO_URL="${REPO_URL:-https://github.com/jeromenatio/codex-mobile.git}"
 APP_DIR="${APP_DIR:-/projects/codex-mobile}"
