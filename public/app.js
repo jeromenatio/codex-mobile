@@ -23,6 +23,13 @@ const defaultQuickPrompts = [
   },
 ];
 
+function generateId() {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 marked.setOptions({
   breaks: true,
   gfm: true,
@@ -1341,7 +1348,7 @@ function onSavePrompt(event) {
     prompts[index] = { ...prompts[index], name, text };
     notify("success", "Prompt mis à jour.");
   } else {
-    prompts.unshift({ id: crypto.randomUUID(), name, text });
+    prompts.unshift({ id: generateId(), name, text });
     notify("success", "Prompt enregistré.");
   }
 
@@ -1628,7 +1635,7 @@ async function copyMessageToClipboard(messageId) {
 }
 
 function notify(type, text) {
-  const id = crypto.randomUUID();
+  const id = generateId();
   const node = document.createElement("article");
   node.className = `toast ${type}`;
   node.dataset.notificationId = id;
@@ -1676,7 +1683,7 @@ async function onPickImages(event) {
   const images = [];
   for (const file of files) {
     images.push({
-      id: crypto.randomUUID(),
+      id: generateId(),
       name: file.name,
       dataUrl: await readFileAsDataUrl(file),
     });
@@ -1817,7 +1824,7 @@ function loadSettings() {
       ? parsed.prompts
           .filter((item) => item && typeof item.name === "string" && typeof item.text === "string")
           .map((item) => ({
-              id: typeof item.id === "string" && item.id ? item.id : crypto.randomUUID(),
+              id: typeof item.id === "string" && item.id ? item.id : generateId(),
               name: item.name.trim(),
               text: item.text.trim(),
               locked: Boolean(item.locked),
@@ -1843,7 +1850,7 @@ function withDefaultQuickPrompts(prompts) {
   for (const item of defaultQuickPrompts) {
     const index = merged.findIndex((prompt) => prompt.name.trim().toLowerCase() === item.name.trim().toLowerCase());
     if (index === -1) {
-      merged.push({ id: crypto.randomUUID(), ...item });
+      merged.push({ id: generateId(), ...item });
       continue;
     }
     merged[index] = { ...merged[index], locked: Boolean(item.locked) };
