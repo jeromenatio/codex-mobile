@@ -628,7 +628,7 @@ function connectSocket(sessionId) {
       if (message.type === "bootstrap") {
         state.messages = message.messages || [];
         updateHeader(message.session);
-        renderMessages();
+        renderMessages(true);
         settle();
         return;
       }
