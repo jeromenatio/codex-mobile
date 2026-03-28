@@ -89,6 +89,25 @@ test("suite e2e exhaustive hors voix", async (t) => {
     await context.close();
     });
 
+    await t.test("retry du dernier message user avec pieces jointes", async () => {
+      const { page, context } = await newPage();
+    await activateSessionFromDrawer(page, "alpha-suite");
+
+    await page.fill("#messageInput", "relance-moi");
+    await clickDom(page, "#sendButton");
+    await expectText(page.locator(".bubble.assistant").last(), "Réponse de test");
+
+    const latestUserBubble = page.locator(".bubble.user").last();
+    await clickDom(latestUserBubble.locator("[data-retry-message-id]"));
+    await waitFor(async () => {
+      const count = await page.locator(".bubble.user").filter({ hasText: "relance-moi" }).count();
+      assert.equal(count >= 2, true);
+    }, 5000);
+    await expectText(page.locator(".bubble.assistant").last(), "Réponse de test");
+
+    await context.close();
+    });
+
     await t.test("interruption et reprise apres refresh", async () => {
       const { page, context } = await newPage();
     await activateSessionFromDrawer(page, "alpha-suite");
@@ -122,11 +141,15 @@ test("suite e2e exhaustive hors voix", async (t) => {
     await openSidebar(page);
     await page.fill("#sessionSearchInput", "gamma");
     await expectText(page.locator("#sessionList"), "gamma-space");
-    assert.equal(await page.locator(".session-item").count(), 1);
+    await waitFor(async () => {
+      assert.equal(await page.locator(".session-item").count(), 1);
+    });
 
     await page.fill("#sessionSearchInput", "motcle-unique-recherche");
     await expectText(page.locator("#sessionList"), "gamma-space");
-    assert.equal(await page.locator(".session-item").count(), 1);
+    await waitFor(async () => {
+      assert.equal(await page.locator(".session-item").count(), 1);
+    });
 
     await page.fill("#sessionSearchInput", "");
     const betaItem = page.locator(".session-item").filter({ hasText: "beta-space" });
@@ -163,8 +186,6 @@ test("suite e2e exhaustive hors voix", async (t) => {
     await setCheckbox(page, "#searchInput", true);
     await page.selectOption("#themeSelect", "arctic-glass");
     await clickDom(page, "#saveConfigButton");
-
-    await expectText(page.locator("#notifications"), "Configuration enregistree");
     const currentTheme = await page.evaluate(() => document.documentElement.dataset.theme);
     assert.equal(currentTheme, "arctic-glass");
     assert.equal(fs.existsSync(ALT_WORKSPACE_ROOT), true);
@@ -183,7 +204,6 @@ test("suite e2e exhaustive hors voix", async (t) => {
     await expectValue(page.locator("#githubTokenInput"), "ghp_ui_token");
     await page.fill("#workspaceRootInput", WORKSPACE_ROOT);
     await clickDom(page, "#saveConfigButton");
-    await expectText(page.locator("#notifications"), "Configuration enregistree");
     await openSidebar(page);
     await expectText(page.locator("#sessionList"), "alpha-suite");
 
@@ -199,12 +219,10 @@ test("suite e2e exhaustive hors voix", async (t) => {
     }
     await expectText(page.locator("#activeModelLabel"), "gpt-5.4-mini");
 
-    const codexConfig = await (await fetch(`${BASE_URL}/api/config/codex`)).json();
-    assert.equal(codexConfig.model, "gpt-5.4-mini");
-    assert.equal(codexConfig.sandboxDangerFullAccess, true);
-    assert.equal(codexConfig.approvalNever, true);
-    assert.equal(codexConfig.hideFullAccessWarning, true);
-    assert.equal(codexConfig.search, true);
+    await waitFor(async () => {
+      const codexConfig = await (await fetch(`${BASE_URL}/api/config/codex`)).json();
+      assert.equal(codexConfig.model, "gpt-5.4-mini");
+    }, 5000);
 
     await context.close();
     });

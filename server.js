@@ -385,6 +385,33 @@ function registerRoutes() {
     }
   });
 
+  app.post("/api/sessions/:sessionId/retry", async (req, res) => {
+    try {
+      const session = findSession(req.params.sessionId);
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+
+      if (runtimes.get(session.id)?.process) {
+        return res.status(409).json({ error: "Codex is already processing this session" });
+      }
+
+      const sourceMessage = [...session.messages].reverse().find((message) => message.role === "user");
+      if (!sourceMessage) {
+        return res.status(400).json({ error: "No user message to retry" });
+      }
+
+      const attachments = Array.isArray(sourceMessage.attachments) ? sourceMessage.attachments : [];
+      await appendUserMessage(session, sourceMessage.text || "", attachments);
+      runSessionTurn(session, sourceMessage.text || "", attachments);
+
+      res.json({ ok: true, session: sanitizeSession(session) });
+    } catch (error) {
+      console.error("Failed to retry session:", error);
+      res.status(500).json({ error: error.message || "Failed to retry session" });
+    }
+  });
+
   app.post("/api/sessions/:sessionId/interrupt", async (req, res) => {
     try {
       const session = findSession(req.params.sessionId);

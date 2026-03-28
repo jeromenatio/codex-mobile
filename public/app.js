@@ -76,6 +76,7 @@ const state = {
   sessionSearchTerm: "",
   sessionSearchResults: null,
   sessionSearchRequestId: 0,
+  manualScrollLockUntil: 0,
   stt: {
     transcript: "",
     interim: "",
@@ -679,6 +680,7 @@ function connectSocket(sessionId) {
 
       if (message.type === "bootstrap") {
         state.messages = message.messages || [];
+        upsertSessionSummary(message.session);
         updateHeader(message.session);
         renderMessages(true);
         settle();
@@ -687,6 +689,7 @@ function connectSocket(sessionId) {
 
       if (message.type === "message") {
         upsertMessage(message.message);
+        upsertSessionSummary(message.session);
         updateHeader(message.session);
         renderMessages(true);
         await refreshBootstrap();
@@ -695,6 +698,7 @@ function connectSocket(sessionId) {
 
       if (message.type === "message.updated") {
         upsertMessage(message.message);
+        upsertSessionSummary(message.session);
         updateHeader(message.session);
         renderMessages(true);
         await refreshBootstrap();
@@ -702,7 +706,9 @@ function connectSocket(sessionId) {
       }
 
       if (message.type === "status") {
+        upsertSessionSummary(message.session);
         updateHeader(message.session);
+        renderMessages(false);
         await refreshBootstrap();
       }
     });
@@ -814,15 +820,32 @@ function renderMessages(shouldScroll = false) {
     return;
   }
 
+  const latestUserMessageId = [...state.messages].reverse().find((message) => message.role === "user")?.id || null;
+  const sessionRunning = state.messages.some((message) => message.role === "assistant" && message.pending);
+
   elements.messages.innerHTML = state.messages
     .map((message) => {
       const pending = message.pending ? "pending" : "";
       const body = escapeHtml(message.text || (message.pending ? "Codex réfléchit" : ""));
+      const canRetry = message.role === "user" && message.id === latestUserMessageId;
       return `
         <article class="bubble ${message.role} ${pending}">
-          <button class="bubble-copy" type="button" data-copy-message-id="${escapeHtml(message.id)}" aria-label="Copier le message">
-            <i class="bi bi-copy" aria-hidden="true"></i>
-          </button>
+          <div class="bubble-tools">
+            ${canRetry ? `
+              <button
+                class="bubble-copy"
+                type="button"
+                data-retry-message-id="${escapeHtml(message.id)}"
+                aria-label="Relancer ce message"
+                ${sessionRunning ? "disabled" : ""}
+              >
+                <i class="bi bi-arrow-repeat" aria-hidden="true"></i>
+              </button>
+            ` : ""}
+            <button class="bubble-copy" type="button" data-copy-message-id="${escapeHtml(message.id)}" aria-label="Copier le message">
+              <i class="bi bi-copy" aria-hidden="true"></i>
+            </button>
+          </div>
           <div class="bubble-meta">${message.role === "user" ? "Vous" : "Codex"} · ${escapeHtml(formatDate(message.createdAt))}</div>
           <div class="bubble-body markdown-body">${renderMarkdown(body)}${
             message.pending ? '<span class="typing-dots" aria-hidden="true"><span></span><span></span><span></span></span>' : ""
@@ -838,7 +861,16 @@ function renderMessages(shouldScroll = false) {
     });
   }
 
+  for (const button of elements.messages.querySelectorAll("[data-retry-message-id]")) {
+    button.addEventListener("click", () => {
+      void retryLastUserMessage();
+    });
+  }
+
   if (shouldScroll) {
+    if (Date.now() < state.manualScrollLockUntil) {
+      return;
+    }
     elements.messages.scrollTop = elements.messages.scrollHeight;
   }
 }
@@ -850,6 +882,20 @@ function upsertMessage(message) {
   } else {
     state.messages[index] = message;
   }
+}
+
+function upsertSessionSummary(session) {
+  if (!state.bootstrap?.sessions || !session?.id) {
+    return;
+  }
+  const index = state.bootstrap.sessions.findIndex((item) => item.id === session.id);
+  if (index === -1) {
+    return;
+  }
+  state.bootstrap.sessions[index] = {
+    ...state.bootstrap.sessions[index],
+    ...session,
+  };
 }
 
 function updateHeader(session) {
@@ -1650,10 +1696,12 @@ async function applyModelChange(slug) {
 }
 
 function scrollConversationTop() {
+  state.manualScrollLockUntil = Date.now() + 1200;
   enforceConversationScroll(0);
 }
 
 function scrollConversationBottom() {
+  state.manualScrollLockUntil = 0;
   enforceConversationScroll(elements.messages.scrollHeight);
 }
 
@@ -1854,6 +1902,38 @@ async function onPickImages(event) {
   renderImageManager();
   renderComposerStatus(state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null);
   notify("success", `${images.length} image${images.length > 1 ? "s" : ""} ajoutée${images.length > 1 ? "s" : ""}.`);
+}
+
+async function retryLastUserMessage() {
+  if (!state.activeSessionId) {
+    notify("warning", "Aucune session active.");
+    return;
+  }
+
+  const session = getActiveSession();
+  if (session?.status === "running") {
+    notify("info", "Codex est deja en train de repondre.");
+    return;
+  }
+
+  const response = await apiFetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/retry`, {
+    method: "POST",
+  });
+
+  if (response.status === 400) {
+    notify("info", "Aucun message utilisateur à relancer.");
+    return;
+  }
+  if (response.status === 409) {
+    notify("info", "Codex est deja en train de repondre.");
+    return;
+  }
+  if (!response.ok) {
+    notify("error", "Relance impossible.");
+    return;
+  }
+
+  notify("success", "Tour relancé.");
 }
 
 function clearComposer() {
