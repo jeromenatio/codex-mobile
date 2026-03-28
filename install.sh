@@ -8,6 +8,7 @@ DEFAULT_WORKSPACE_ROOT="${DEFAULT_WORKSPACE_ROOT:-/projects}"
 ENV_DIR="${ENV_DIR:-/etc/codex-mobile}"
 ENV_FILE="${ENV_FILE:-${ENV_DIR}/.env}"
 SERVICE_INSTALL="${SERVICE_INSTALL:-yes}"
+AUTH_TOKEN_VALUE=""
 
 if ! command -v sudo >/dev/null 2>&1 && [[ "${EUID}" -ne 0 ]]; then
   echo "sudo est requis pour lancer l'installation." >&2
@@ -110,6 +111,7 @@ write_env_file() {
   run_root mkdir -p "${ENV_DIR}"
   local auth_token existing_github
   auth_token="$(generate_token)"
+  AUTH_TOKEN_VALUE="${auth_token}"
   existing_github=""
 
   if [[ -f "${ENV_FILE}" ]]; then
@@ -122,11 +124,6 @@ write_env_file() {
 CODEX_MOBILE_AUTH_TOKEN=${auth_token}
 GITHUB_TOKEN=${existing_github}
 EOF"
-
-  echo
-  echo "Token d'acces genere et ecrit dans ${ENV_FILE}"
-  echo "CODEX_MOBILE_AUTH_TOKEN=${auth_token}"
-  echo
 }
 
 write_initial_state() {
@@ -221,6 +218,11 @@ main() {
   echo "Projet: ${APP_DIR}"
   echo "Root workspaces: ${WORKSPACE_ROOT}"
   echo "Env: ${ENV_FILE}"
+  echo
+  echo "Token d'acces:"
+  echo "${AUTH_TOKEN_VALUE}"
+  echo
+  echo "Tu peux le retrouver plus tard dans ${ENV_FILE}"
   echo
   echo "Si tu n'as pas installe le service systemd, lance ensuite:"
   echo "cd ${APP_DIR} && npm start"
