@@ -345,6 +345,12 @@ async function createSession(page, workspace) {
 }
 
 async function sendMessage(page, text) {
+  await waitFor(async () => {
+    const label = await page.locator("#sendButton").getAttribute("aria-label");
+    const disabled = await page.locator("#messageInput").isDisabled();
+    assert.equal(label, "Envoyer");
+    assert.equal(disabled, false);
+  }, 5000);
   await page.fill("#messageInput", text);
   await clickDom(page, "#sendButton");
 }

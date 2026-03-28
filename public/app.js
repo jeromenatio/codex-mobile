@@ -574,55 +574,77 @@ async function activateSession(sessionId) {
   updateHeader(session);
   renderSessionList();
   renderMessages();
-  connectSocket(sessionId);
+  await connectSocket(sessionId);
 }
 
 function connectSocket(sessionId) {
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const socket = new WebSocket(`${protocol}//${window.location.host}/ws?sessionId=${encodeURIComponent(sessionId)}`);
-  state.socket = socket;
+  return new Promise((resolve) => {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const socket = new WebSocket(`${protocol}//${window.location.host}/ws?sessionId=${encodeURIComponent(sessionId)}`);
+    state.socket = socket;
 
-  socket.addEventListener("message", async (event) => {
-    const message = JSON.parse(event.data);
-
-    if (message.type === "bootstrap") {
-      state.messages = message.messages || [];
-      updateHeader(message.session);
-      renderMessages();
-      return;
-    }
-
-    if (message.type === "message") {
-      upsertMessage(message.message);
-      updateHeader(message.session);
-      renderMessages(true);
-      await refreshBootstrap();
-      return;
-    }
-
-    if (message.type === "message.updated") {
-      upsertMessage(message.message);
-      updateHeader(message.session);
-      renderMessages(true);
-      await refreshBootstrap();
-      return;
-    }
-
-    if (message.type === "status") {
-      updateHeader(message.session);
-      await refreshBootstrap();
-    }
-  });
-
-  socket.addEventListener("close", async () => {
-    if (state.socket === socket) {
-      state.socket = null;
-      await refreshBootstrap();
-      const session = state.bootstrap.sessions.find((item) => item.id === state.activeSessionId);
-      if (session) {
-        updateHeader(session);
+    let settled = false;
+    const settle = () => {
+      if (settled) {
+        return;
       }
-    }
+      settled = true;
+      clearTimeout(timeoutId);
+      resolve();
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      settle();
+    }, 3000);
+
+    socket.addEventListener("message", async (event) => {
+      const message = JSON.parse(event.data);
+
+      if (message.type === "bootstrap") {
+        state.messages = message.messages || [];
+        updateHeader(message.session);
+        renderMessages();
+        settle();
+        return;
+      }
+
+      if (message.type === "message") {
+        upsertMessage(message.message);
+        updateHeader(message.session);
+        renderMessages(true);
+        await refreshBootstrap();
+        return;
+      }
+
+      if (message.type === "message.updated") {
+        upsertMessage(message.message);
+        updateHeader(message.session);
+        renderMessages(true);
+        await refreshBootstrap();
+        return;
+      }
+
+      if (message.type === "status") {
+        updateHeader(message.session);
+        await refreshBootstrap();
+      }
+    });
+
+    socket.addEventListener("error", () => {
+      settle();
+    });
+
+    socket.addEventListener("close", async () => {
+      settle();
+      if (state.socket === socket) {
+        state.socket = null;
+        await refreshBootstrap();
+        const session = state.bootstrap.sessions.find((item) => item.id === state.activeSessionId);
+        if (session) {
+          updateHeader(session);
+        }
+      }
+    });
   });
 }
 
@@ -1512,10 +1534,12 @@ async function applyModelChange(slug) {
 
 function scrollConversationTop() {
   elements.messages.scrollTo({ top: 0, behavior: "smooth" });
+  elements.messages.scrollTop = 0;
 }
 
 function scrollConversationBottom() {
   elements.messages.scrollTo({ top: elements.messages.scrollHeight, behavior: "smooth" });
+  elements.messages.scrollTop = elements.messages.scrollHeight;
 }
 
 async function onRenameSession(event) {
