@@ -200,7 +200,9 @@ function registerRoutes() {
   app.put("/api/config/app", async (req, res) => {
     try {
       const workspaceRoot = normalizeWorkspaceRoot(req.body?.workspaceRoot);
-      const githubToken = String(req.body?.githubToken || "").trim();
+      const incomingGithubToken = String(req.body?.githubToken || "").trim();
+      const currentGithubToken = String(process.env.GITHUB_TOKEN || "").trim();
+      const githubToken = incomingGithubToken || currentGithubToken;
       await fsp.mkdir(workspaceRoot, { recursive: true });
       await upsertEnvValue(CODEX_MOBILE_ENV_FILE, "GITHUB_TOKEN", githubToken);
       process.env.GITHUB_TOKEN = githubToken;

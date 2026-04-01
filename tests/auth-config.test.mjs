@@ -109,6 +109,21 @@ test("auth et configuration app", async () => {
     assert.match(envText, /^GITHUB_TOKEN=ghp_updated_test_token$/m);
     assert.match(envText, /^CODEX_MOBILE_AUTH_TOKEN=test-auth-token$/m);
 
+    response = await fetch(`${BASE_URL}/api/config/app`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ workspaceRoot: nextRoot, githubToken: "" }),
+    });
+    assert.equal(response.status, 200);
+    const preservedConfig = await response.json();
+    assert.equal(preservedConfig.githubToken, nextGithubToken);
+
+    const preservedEnvText = await fsp.readFile(ENV_FILE, "utf8");
+    assert.match(preservedEnvText, /^GITHUB_TOKEN=ghp_updated_test_token$/m);
+
     response = await fetch(`${BASE_URL}/api/sessions`, {
       method: "POST",
       headers: {
