@@ -209,6 +209,10 @@ detect_server_ip() {
   printf '%s\n' "${ip}"
 }
 
+read_auth_token() {
+  run_root bash -lc "sed -n 's/^CODEX_MOBILE_AUTH_TOKEN=//p' '${CODEX_MOBILE_INSTALL_ENV_FILE}' | head -n 1"
+}
+
 main() {
   echo "==> Installation de Codex Mobile"
   install_base_packages
@@ -232,7 +236,7 @@ main() {
   echo "$(detect_server_ip)"
   echo
   echo "Token d'acces:"
-  echo "${AUTH_TOKEN_VALUE}"
+  echo "$(read_auth_token)"
   echo
   echo "Tu peux le retrouver plus tard dans ${CODEX_MOBILE_INSTALL_ENV_FILE}"
   echo
