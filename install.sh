@@ -192,7 +192,7 @@ install_service_if_requested() {
     (
       cd "${APP_DIR}"
       run_root chmod +x ./service.sh
-      run_root ./service.sh
+      run_root env SERVICE_QUIET=1 ./service.sh
     )
   fi
 }
@@ -227,21 +227,19 @@ main() {
   install_service_if_requested
 
   echo
-  echo "Installation terminee."
+  echo "========================================"
+  echo "Installation terminee"
+  echo "========================================"
   echo "Projet: ${APP_DIR}"
   echo "Root workspaces: ${WORKSPACE_ROOT}"
   echo "Env: ${CODEX_MOBILE_INSTALL_ENV_FILE}"
-  echo
-  echo "IP:"
-  echo "$(detect_server_ip)"
-  echo
-  echo "Token d'acces:"
-  echo "$(read_auth_token)"
-  echo
-  echo "Tu peux le retrouver plus tard dans ${CODEX_MOBILE_INSTALL_ENV_FILE}"
-  echo
-  echo "Si tu n'as pas installe le service systemd, lance ensuite:"
-  echo "cd ${APP_DIR} && npm start"
+  echo "IP: $(detect_server_ip)"
+  echo "Token d'acces: $(read_auth_token)"
+  echo "========================================"
+  echo "Tu peux retrouver le token dans ${CODEX_MOBILE_INSTALL_ENV_FILE}"
+  if [[ "${SERVICE_INSTALL}" != "yes" ]]; then
+    echo "Lancement manuel: cd ${APP_DIR} && npm start"
+  fi
 }
 
 main "$@"

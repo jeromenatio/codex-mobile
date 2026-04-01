@@ -6,6 +6,7 @@ APP_DIR="${APP_DIR:-/projects/codex-mobile}"
 RUN_USER="${RUN_USER:-root}"
 RUN_GROUP="${RUN_GROUP:-root}"
 PORT="${PORT:-4180}"
+SERVICE_QUIET="${SERVICE_QUIET:-0}"
 NODE_BIN="${NODE_BIN:-$(command -v node)}"
 NPM_BIN="${NPM_BIN:-$(command -v npm)}"
 SYSTEMD_DIR="/etc/systemd/system"
@@ -67,7 +68,9 @@ systemctl daemon-reload
 systemctl enable "${SERVICE_NAME}"
 systemctl restart "${SERVICE_NAME}"
 
-echo "Service installe: ${SERVICE_NAME}"
-echo "Fichier: ${SERVICE_FILE}"
-echo "Statut:"
-systemctl --no-pager --full status "${SERVICE_NAME}" || true
+if [[ "${SERVICE_QUIET}" != "1" ]]; then
+  echo "Service installe: ${SERVICE_NAME}"
+  echo "Fichier: ${SERVICE_FILE}"
+  echo "Statut:"
+  systemctl --no-pager --full status "${SERVICE_NAME}" || true
+fi
