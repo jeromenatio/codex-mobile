@@ -110,6 +110,7 @@ const elements = {
   toggleMenuDrawer: document.getElementById("toggleMenuDrawer"),
   menuDrawer: document.getElementById("menuDrawer"),
   closeMenuDrawer: document.getElementById("closeMenuDrawer"),
+  menuSessionsButton: document.getElementById("menuSessionsButton"),
   menuNewSessionButton: document.getElementById("menuNewSessionButton"),
   menuConfigButton: document.getElementById("menuConfigButton"),
   menuSecretsButton: document.getElementById("menuSecretsButton"),
@@ -326,6 +327,10 @@ function bindEvents() {
   elements.confirmModelChangeButton.addEventListener("click", confirmModelChange);
   elements.toggleMenuDrawer.addEventListener("click", toggleMenuDrawer);
   elements.closeMenuDrawer?.addEventListener("click", closeMenuDrawer);
+  elements.menuSessionsButton?.addEventListener("click", () => {
+    closeMenuDrawer();
+    elements.sidebar.classList.add("open");
+  });
   elements.menuNewSessionButton.addEventListener("click", openCreateModal);
   elements.menuConfigButton.addEventListener("click", openConfigModal);
   elements.menuExportSessionButton.addEventListener("click", () => {
@@ -1149,7 +1154,7 @@ function resetSecretForm() {
   elements.secretIdentifierInput.value = "";
   elements.secretPasswordInput.value = "";
   elements.secretValueInput.placeholder = "Valeur du secret";
-  elements.secretEditorHint.textContent = "La valeur n'est jamais affichée dans la liste.";
+  elements.secretEditorHint.innerHTML = `<i class="bi bi-info-circle-fill" aria-hidden="true"></i><span>La valeur n'est jamais affichée dans la liste.</span>`;
   syncSecretEditorFields();
 }
 
@@ -1168,10 +1173,10 @@ function openEditSecretEditor(secret) {
   elements.secretIdentifierInput.value = "";
   elements.secretPasswordInput.value = "";
   elements.secretValueInput.placeholder = "Laisser vide pour conserver la valeur";
-  elements.secretEditorHint.textContent =
+  elements.secretEditorHint.innerHTML =
     secret.type === "credentials"
-      ? "Laisse les champs vides pour conserver l'identifiant et le mot de passe existants."
-      : "Laisse la valeur vide pour conserver le secret existant.";
+      ? `<i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i><span>Laisse les champs vides pour conserver les identifiants existants.</span>`
+      : `<i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i><span>Laisse la valeur vide pour conserver le secret existant.</span>`;
   syncSecretEditorFields();
   openSecretEditorModal();
 }

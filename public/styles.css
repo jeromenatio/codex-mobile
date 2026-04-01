@@ -1100,6 +1100,33 @@ textarea {
   color: var(--ink-soft);
 }
 
+.field-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 11px 12px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--panel-soft);
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.field-hint i {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.field-hint-info {
+  background: color-mix(in srgb, var(--badge-muted-bg) 72%, var(--panel-soft));
+}
+
+.field-hint-info i {
+  color: var(--ink-soft);
+}
+
 .field input,
 .field textarea,
 #messageInput {
