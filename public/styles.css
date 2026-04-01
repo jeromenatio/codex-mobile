@@ -578,6 +578,10 @@ body {
   overflow: hidden;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body.auth-locked .app-shell {
   filter: blur(12px);
   pointer-events: none;
@@ -990,8 +994,40 @@ textarea {
 .sidebar-stats {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sidebar-stats-copy {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
+  min-width: 0;
   flex-wrap: nowrap;
+}
+
+.sidebar-create-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.sidebar-create-button i {
+  font-size: 0.92rem;
+  color: var(--accent-dark);
+}
+
+.sidebar-create-button:hover,
+.sidebar-create-button:focus-visible {
+  background: color-mix(in srgb, var(--accent-soft) 70%, var(--button-bg));
 }
 
 .session-search {
@@ -1031,11 +1067,32 @@ textarea {
   font-size: 0.74rem;
 }
 
-.stack,
+.stack {
+  display: grid;
+  gap: 14px;
+}
+
 .field,
 .composer {
   display: grid;
-  gap: 12px;
+}
+
+.field {
+  gap: 5px;
+  padding-bottom: 6px;
+}
+
+.settings-group .field,
+.settings-group .setting-row,
+.settings-group .switch-row {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+#secretEditorForm .setting-row {
+  padding-top: 12px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
 }
 
 .field span,
@@ -1741,6 +1798,53 @@ textarea {
   color: var(--ink-soft);
   transform: none;
   box-shadow: none;
+}
+
+.secret-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 18px;
+  background: transparent;
+  border: 1px solid var(--line);
+}
+
+.secret-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.secret-copy {
+  min-width: 0;
+}
+
+.secret-copy strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.secret-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 6px;
+}
+
+.secret-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
 }
 
 .prompt-empty {

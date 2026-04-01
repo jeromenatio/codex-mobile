@@ -49,7 +49,6 @@ test("auth et configuration app", async () => {
     assert.equal(response.status, 200);
     const initialConfig = await response.json();
     assert.equal(initialConfig.workspaceRoot, WORKSPACE_ROOT);
-    assert.equal(initialConfig.githubToken, INITIAL_GITHUB_TOKEN);
 
     response = await fetch(`${BASE_URL}/api/ui-state`, {
       headers: { cookie },
@@ -62,19 +61,17 @@ test("auth et configuration app", async () => {
     assert.match(initialUiState.prompts.map((item) => item.name).join(" | "), /Commit & push/);
 
     const nextRoot = path.join(TMP_ROOT, "workspaces-alt");
-    const nextGithubToken = "ghp_updated_test_token";
     response = await fetch(`${BASE_URL}/api/config/app`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
         cookie,
       },
-      body: JSON.stringify({ workspaceRoot: nextRoot, githubToken: nextGithubToken }),
+      body: JSON.stringify({ workspaceRoot: nextRoot }),
     });
     assert.equal(response.status, 200);
     const updatedConfig = await response.json();
     assert.equal(updatedConfig.workspaceRoot, nextRoot);
-    assert.equal(updatedConfig.githubToken, nextGithubToken);
     assert.equal(fs.existsSync(nextRoot), true);
 
     response = await fetch(`${BASE_URL}/api/ui-state`, {
@@ -105,24 +102,90 @@ test("auth et configuration app", async () => {
     assert.equal(updatedUiState.lastSessionId, "session-test-id");
     assert.match(updatedUiState.prompts.map((item) => item.name).join(" | "), /Résumé/);
 
-    const envText = await fsp.readFile(ENV_FILE, "utf8");
-    assert.match(envText, /^GITHUB_TOKEN=ghp_updated_test_token$/m);
-    assert.match(envText, /^CODEX_MOBILE_AUTH_TOKEN=test-auth-token$/m);
+    response = await fetch(`${BASE_URL}/api/secrets`, {
+      headers: { cookie },
+    });
+    assert.equal(response.status, 200);
+    const listedSecrets = await response.json();
+    assert.equal(Array.isArray(listedSecrets.secrets), true);
+    assert.equal(listedSecrets.secrets.some((item) => item.key === "GITHUB_TOKEN"), true);
 
-    response = await fetch(`${BASE_URL}/api/config/app`, {
-      method: "PUT",
+    const nextGithubToken = "ghp_updated_test_token";
+    response = await fetch(`${BASE_URL}/api/secrets/GITHUB_TOKEN`, {
+      method: "PATCH",
       headers: {
         "Content-Type": "application/json",
         cookie,
       },
-      body: JSON.stringify({ workspaceRoot: nextRoot, githubToken: "" }),
+      body: JSON.stringify({ key: "GITHUB_TOKEN", value: nextGithubToken }),
     });
     assert.equal(response.status, 200);
-    const preservedConfig = await response.json();
-    assert.equal(preservedConfig.githubToken, nextGithubToken);
 
-    const preservedEnvText = await fsp.readFile(ENV_FILE, "utf8");
-    assert.match(preservedEnvText, /^GITHUB_TOKEN=ghp_updated_test_token$/m);
+    response = await fetch(`${BASE_URL}/api/secrets/GITHUB_TOKEN`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ key: "GITHUB_TOKEN", value: "" }),
+    });
+    assert.equal(response.status, 200);
+
+    response = await fetch(`${BASE_URL}/api/secrets`, {
+      headers: { cookie },
+    });
+    const preservedSecrets = await response.json();
+    assert.equal(preservedSecrets.secrets.some((item) => item.key === "GITHUB_TOKEN"), true);
+
+    response = await fetch(`${BASE_URL}/api/secrets`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ key: "OVH_TOKEN", value: "ovh-secret-value" }),
+    });
+    assert.equal(response.status, 201);
+
+    response = await fetch(`${BASE_URL}/api/secrets`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ key: "HETZNER", type: "credentials", identifier: "hz-id", password: "hz-pass" }),
+    });
+    assert.equal(response.status, 201);
+
+    response = await fetch(`${BASE_URL}/api/secrets`, {
+      headers: { cookie },
+    });
+    const mixedSecrets = await response.json();
+    const hetzner = mixedSecrets.secrets.find((item) => item.key === "HETZNER");
+    assert.equal(hetzner?.type, "credentials");
+
+    response = await fetch(`${BASE_URL}/api/secrets/OVH_TOKEN`, {
+      method: "DELETE",
+      headers: { cookie },
+    });
+    assert.equal(response.status, 200);
+
+    response = await fetch(`${BASE_URL}/api/secrets/HETZNER`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ key: "HETZNER", type: "credentials", identifier: "", password: "hz-pass-2" }),
+    });
+    assert.equal(response.status, 200);
+
+    const envText = await fsp.readFile(ENV_FILE, "utf8");
+    assert.match(envText, /^GITHUB_TOKEN=ghp_updated_test_token$/m);
+    assert.match(envText, /^CODEX_MOBILE_AUTH_TOKEN=test-auth-token$/m);
+    assert.doesNotMatch(envText, /^OVH_TOKEN=/m);
+    assert.match(envText, /^HETZNER_ID=hz-id$/m);
+    assert.match(envText, /^HETZNER_PASSWORD=hz-pass-2$/m);
 
     response = await fetch(`${BASE_URL}/api/sessions`, {
       method: "POST",

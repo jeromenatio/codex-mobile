@@ -56,8 +56,8 @@ const state = {
   settings: defaultSettings(),
   appConfig: {
     workspaceRoot: "/projects",
-    githubToken: "",
   },
+  secrets: [],
   codexConfig: {
     model: "gpt-5.4",
     availableModels: [],
@@ -70,9 +70,10 @@ const state = {
   pendingAttachments: [],
   imagePickerBusy: false,
   pendingRenameSessionId: null,
-  pendingDeleteSessionId: null,
+  pendingDeleteAction: null,
   pendingModelSlug: null,
   editingPromptId: null,
+  editingSecretKey: null,
   sessionSearchTerm: "",
   sessionSearchResults: null,
   sessionSearchRequestId: 0,
@@ -111,6 +112,7 @@ const elements = {
   closeMenuDrawer: document.getElementById("closeMenuDrawer"),
   menuNewSessionButton: document.getElementById("menuNewSessionButton"),
   menuConfigButton: document.getElementById("menuConfigButton"),
+  menuSecretsButton: document.getElementById("menuSecretsButton"),
   menuExportSessionButton: document.getElementById("menuExportSessionButton"),
   closeConfigModal: document.getElementById("closeConfigModal"),
   saveConfigButton: document.getElementById("saveConfigButton"),
@@ -122,7 +124,6 @@ const elements = {
   themeValueInput: document.getElementById("themeValueInput"),
   notificationDurationInput: document.getElementById("notificationDurationInput"),
   workspaceRootInput: document.getElementById("workspaceRootInput"),
-  githubTokenInput: document.getElementById("githubTokenInput"),
   sandboxDangerInput: document.getElementById("sandboxDangerInput"),
   approvalNeverInput: document.getElementById("approvalNeverInput"),
   hideFullAccessWarningInput: document.getElementById("hideFullAccessWarningInput"),
@@ -144,6 +145,27 @@ const elements = {
   savePromptButton: document.getElementById("savePromptButton"),
   resetPromptFormButton: document.getElementById("resetPromptFormButton"),
   promptList: document.getElementById("promptList"),
+  secretsModal: document.getElementById("secretsModal"),
+  secretsBackdrop: document.getElementById("secretsBackdrop"),
+  closeSecretsModal: document.getElementById("closeSecretsModal"),
+  doneSecretsModalButton: document.getElementById("doneSecretsModalButton"),
+  openCreateSecretButton: document.getElementById("openCreateSecretButton"),
+  secretsList: document.getElementById("secretsList"),
+  secretEditorModal: document.getElementById("secretEditorModal"),
+  secretEditorBackdrop: document.getElementById("secretEditorBackdrop"),
+  closeSecretEditorModal: document.getElementById("closeSecretEditorModal"),
+  cancelSecretEditor: document.getElementById("cancelSecretEditor"),
+  secretEditorModalTitle: document.getElementById("secretEditorModalTitle"),
+  secretEditorForm: document.getElementById("secretEditorForm"),
+  secretTypeInput: document.getElementById("secretTypeInput"),
+  secretKeyInput: document.getElementById("secretKeyInput"),
+  secretValueInput: document.getElementById("secretValueInput"),
+  secretValueField: document.getElementById("secretValueField"),
+  secretIdentifierField: document.getElementById("secretIdentifierField"),
+  secretIdentifierInput: document.getElementById("secretIdentifierInput"),
+  secretPasswordField: document.getElementById("secretPasswordField"),
+  secretPasswordInput: document.getElementById("secretPasswordInput"),
+  secretEditorHint: document.getElementById("secretEditorHint"),
   imageModal: document.getElementById("imageModal"),
   imageBackdrop: document.getElementById("imageBackdrop"),
   closeImageModal: document.getElementById("closeImageModal"),
@@ -168,6 +190,7 @@ const elements = {
   renameSessionForm: document.getElementById("renameSessionForm"),
   renameSessionInput: document.getElementById("renameSessionInput"),
   deleteModal: document.getElementById("deleteModal"),
+  deleteModalTitle: document.getElementById("deleteModalTitle"),
   deleteBackdrop: document.getElementById("deleteBackdrop"),
   closeDeleteModal: document.getElementById("closeDeleteModal"),
   cancelDeleteModal: document.getElementById("cancelDeleteModal"),
@@ -255,6 +278,9 @@ function bindEvents() {
     void logout();
   });
   elements.openPromptModal.addEventListener("click", openPromptModal);
+  elements.menuSecretsButton.addEventListener("click", () => {
+    void openSecretsModal();
+  });
   elements.closePromptModal.addEventListener("click", closePromptModal);
   elements.closePromptFooterButton.addEventListener("click", closePromptModal);
   elements.openPromptEditorButton.addEventListener("click", openCreatePromptEditor);
@@ -263,6 +289,15 @@ function bindEvents() {
   elements.cancelPromptEditorButton.addEventListener("click", closePromptEditorModal);
   elements.promptEditorBackdrop.addEventListener("click", closePromptEditorModal);
   elements.promptForm.addEventListener("submit", onSavePrompt);
+  elements.closeSecretsModal.addEventListener("click", closeSecretsModal);
+  elements.doneSecretsModalButton.addEventListener("click", closeSecretsModal);
+  elements.openCreateSecretButton.addEventListener("click", openCreateSecretEditor);
+  elements.secretsBackdrop.addEventListener("click", closeSecretsModal);
+  elements.closeSecretEditorModal.addEventListener("click", closeSecretEditorModal);
+  elements.cancelSecretEditor.addEventListener("click", closeSecretEditorModal);
+  elements.secretEditorBackdrop.addEventListener("click", closeSecretEditorModal);
+  elements.secretEditorForm.addEventListener("submit", onSaveSecret);
+  elements.secretTypeInput.addEventListener("change", syncSecretEditorFields);
   elements.closeImageModal.addEventListener("click", closeImageModal);
   elements.doneImageModalButton.addEventListener("click", closeImageModal);
   elements.addMoreImagesButton.addEventListener("click", () => elements.imageInput.click());
@@ -312,7 +347,9 @@ function bindEvents() {
   elements.closeDeleteModal.addEventListener("click", closeDeleteModal);
   elements.cancelDeleteModal.addEventListener("click", closeDeleteModal);
   elements.deleteBackdrop.addEventListener("click", closeDeleteModal);
-  elements.confirmDeleteButton.addEventListener("click", onDeleteSession);
+  elements.confirmDeleteButton.addEventListener("click", () => {
+    void onConfirmDelete();
+  });
   elements.closeCreateModal.addEventListener("click", closeCreateModal);
   elements.cancelCreateModal.addEventListener("click", closeCreateModal);
   elements.modalBackdrop.addEventListener("click", closeCreateModal);
@@ -474,6 +511,15 @@ async function refreshAppConfig() {
   state.appConfig = await response.json();
 }
 
+async function refreshSecrets() {
+  const response = await apiFetch("/api/secrets");
+  if (!response.ok) {
+    throw new Error("Impossible de charger les secrets.");
+  }
+  const payload = await response.json();
+  state.secrets = Array.isArray(payload.secrets) ? payload.secrets : [];
+}
+
 async function refreshUiState() {
   const response = await apiFetch("/api/ui-state");
   if (!response.ok) {
@@ -589,7 +635,7 @@ function renderSessionList() {
       if (!session) {
         return;
       }
-      openDeleteModal(session);
+      openDeleteSessionModal(session);
     });
   }
 }
@@ -770,13 +816,12 @@ async function onCreateSession(event) {
 
 async function onSendMessage(event) {
   event.preventDefault();
-  const session = getActiveSession();
   const text = elements.messageInput.value.trim();
   if (!state.activeSessionId) {
     notify("warning", "Selectionne d'abord une session.");
     return;
   }
-  if (session?.status === "running") {
+  if (isActiveSessionRunning()) {
     const response = await apiFetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/interrupt`, {
       method: "POST",
     });
@@ -942,6 +987,13 @@ function upsertSessionSummary(session) {
   };
 }
 
+function isActiveSessionRunning() {
+  if (state.messages.some((message) => message.role === "assistant" && message.pending)) {
+    return true;
+  }
+  return getActiveSession()?.status === "running";
+}
+
 function updateHeader(session) {
   elements.activeMessageCount.textContent = session ? `${session.messageCount || 0} msg` : "";
   elements.activeWorkspace.textContent = session ? session.workspaceName || "" : "";
@@ -1027,6 +1079,7 @@ async function openConfigModal() {
   closeMenuDrawer();
   closeCreateModal();
   closePromptModal();
+  closeSecretsModal();
   closeImageModal();
   await closeSttModal();
   closeModelModal();
@@ -1043,7 +1096,6 @@ async function openConfigModal() {
   elements.themeValueInput.value = state.settings.theme;
   elements.notificationDurationInput.value = String(state.settings.notificationDurationSeconds);
   elements.workspaceRootInput.value = state.appConfig.workspaceRoot || "/projects";
-  elements.githubTokenInput.value = state.appConfig.githubToken || "";
   elements.sandboxDangerInput.checked = Boolean(state.codexConfig.sandboxDangerFullAccess);
   elements.approvalNeverInput.checked = Boolean(state.codexConfig.approvalNever);
   elements.hideFullAccessWarningInput.checked = Boolean(state.codexConfig.hideFullAccessWarning);
@@ -1055,6 +1107,154 @@ async function openConfigModal() {
 function closeConfigModal() {
   elements.configModal.classList.remove("open");
   elements.configModal.setAttribute("aria-hidden", "true");
+}
+
+async function openSecretsModal() {
+  closeSidebar();
+  closeMenuDrawer();
+  closeCreateModal();
+  closeConfigModal();
+  closeSecretsModal();
+  closePromptModal();
+  closeImageModal();
+  await closeSttModal();
+  closeModelModal();
+  closeConfirmModelModal();
+  closeRenameModal();
+  closeDeleteModal();
+  try {
+    await refreshSecrets();
+  } catch {
+    notify("error", "Chargement des secrets impossible.");
+    return;
+  }
+  renderSecretsList();
+  elements.secretsModal.classList.add("open");
+  elements.secretsModal.setAttribute("aria-hidden", "false");
+}
+
+function closeSecretsModal() {
+  closeSecretEditorModal();
+  elements.secretsModal.classList.remove("open");
+  elements.secretsModal.setAttribute("aria-hidden", "true");
+}
+
+function resetSecretForm() {
+  state.editingSecretKey = null;
+  elements.secretEditorModalTitle.textContent = "Nouveau secret";
+  elements.secretTypeInput.value = "value";
+  elements.secretKeyInput.value = "";
+  elements.secretKeyInput.disabled = false;
+  elements.secretValueInput.value = "";
+  elements.secretIdentifierInput.value = "";
+  elements.secretPasswordInput.value = "";
+  elements.secretValueInput.placeholder = "Valeur du secret";
+  elements.secretEditorHint.textContent = "La valeur n'est jamais affichée dans la liste.";
+  syncSecretEditorFields();
+}
+
+function openCreateSecretEditor() {
+  resetSecretForm();
+  openSecretEditorModal();
+}
+
+function openEditSecretEditor(secret) {
+  state.editingSecretKey = secret.key;
+  elements.secretEditorModalTitle.textContent = "Modifier le secret";
+  elements.secretTypeInput.value = secret.type || "value";
+  elements.secretKeyInput.value = secret.key;
+  elements.secretKeyInput.disabled = false;
+  elements.secretValueInput.value = "";
+  elements.secretIdentifierInput.value = "";
+  elements.secretPasswordInput.value = "";
+  elements.secretValueInput.placeholder = "Laisser vide pour conserver la valeur";
+  elements.secretEditorHint.textContent =
+    secret.type === "credentials"
+      ? "Laisse les champs vides pour conserver l'identifiant et le mot de passe existants."
+      : "Laisse la valeur vide pour conserver le secret existant.";
+  syncSecretEditorFields();
+  openSecretEditorModal();
+}
+
+function openSecretEditorModal() {
+  elements.secretEditorModal.classList.add("open");
+  elements.secretEditorModal.setAttribute("aria-hidden", "false");
+  window.setTimeout(() => {
+    elements.secretKeyInput.focus();
+    if (!state.editingSecretKey) {
+      elements.secretKeyInput.select();
+    }
+  }, 0);
+}
+
+function closeSecretEditorModal() {
+  state.editingSecretKey = null;
+  elements.secretEditorModal.classList.remove("open");
+  elements.secretEditorModal.setAttribute("aria-hidden", "true");
+}
+
+function syncSecretEditorFields() {
+  const credentials = elements.secretTypeInput.value === "credentials";
+  elements.secretValueField.hidden = credentials;
+  elements.secretValueField.setAttribute("aria-hidden", credentials ? "true" : "false");
+  elements.secretValueInput.disabled = credentials;
+  elements.secretValueInput.required = !credentials && !state.editingSecretKey;
+
+  elements.secretIdentifierField.hidden = !credentials;
+  elements.secretIdentifierField.setAttribute("aria-hidden", credentials ? "false" : "true");
+  elements.secretIdentifierInput.disabled = !credentials;
+  elements.secretIdentifierInput.required = credentials && !state.editingSecretKey;
+
+  elements.secretPasswordField.hidden = !credentials;
+  elements.secretPasswordField.setAttribute("aria-hidden", credentials ? "false" : "true");
+  elements.secretPasswordInput.disabled = !credentials;
+  elements.secretPasswordInput.required = credentials && !state.editingSecretKey;
+}
+
+function renderSecretsList() {
+  if (!state.secrets.length) {
+    elements.secretsList.innerHTML = `<div class="empty-chat">Aucun secret enregistré.</div>`;
+    return;
+  }
+
+  elements.secretsList.innerHTML = state.secrets
+    .map((secret) => `
+      <article class="secret-item">
+        <button class="secret-main" type="button" data-secret-edit="${escapeHtml(secret.key)}">
+          <div class="secret-copy">
+            <strong>${escapeHtml(secret.key)}</strong>
+            <div class="secret-meta">
+              <span class="mini-badge muted">${secret.type === "credentials" ? "Identifiants" : "Valeur"}</span>
+              <span class="mini-badge ${secret.hasValue ? "live" : "muted"}">${secret.hasValue ? "Enregistré" : "Vide"}</span>
+            </div>
+          </div>
+        </button>
+        <div class="secret-actions">
+          <button class="icon-button plain-button" type="button" data-secret-edit="${escapeHtml(secret.key)}" aria-label="Modifier ${escapeHtml(secret.key)}">
+            <i class="bi bi-pencil-fill icon-glyph" aria-hidden="true"></i>
+          </button>
+          <button class="icon-button plain-button" type="button" data-secret-delete="${escapeHtml(secret.key)}" aria-label="Supprimer ${escapeHtml(secret.key)}">
+            <i class="bi bi-trash3-fill icon-glyph" aria-hidden="true"></i>
+          </button>
+        </div>
+      </article>
+    `)
+    .join("");
+
+  for (const button of elements.secretsList.querySelectorAll("[data-secret-edit]")) {
+    button.addEventListener("click", () => {
+      const secret = state.secrets.find((item) => item.key === button.dataset.secretEdit);
+      if (secret) {
+        openEditSecretEditor(secret);
+      }
+    });
+  }
+
+  for (const button of elements.secretsList.querySelectorAll("[data-secret-delete]")) {
+    button.addEventListener("click", () => {
+      requestDeleteSecret(button.dataset.secretDelete);
+    });
+  }
 }
 
 function onThemeSelectionChange(event) {
@@ -1096,6 +1296,7 @@ function openPromptModal() {
   closeMenuDrawer();
   closeCreateModal();
   closeConfigModal();
+  closeSecretsModal();
   closeImageModal();
   void closeSttModal();
   closeModelModal();
@@ -1141,6 +1342,7 @@ function openImageModal() {
   closeSidebar();
   closeCreateModal();
   closeConfigModal();
+  closeSecretsModal();
   closePromptModal();
   void closeSttModal();
   closeModelModal();
@@ -1161,6 +1363,7 @@ async function openSttModal() {
   closeSidebar();
   closeCreateModal();
   closeConfigModal();
+  closeSecretsModal();
   closePromptModal();
   closeImageModal();
   closeModelModal();
@@ -1451,7 +1654,7 @@ function renderPromptList() {
         return;
       }
       if (action === "delete") {
-        deletePrompt(promptId);
+        requestDeletePrompt(promptId);
       }
     });
   }
@@ -1495,7 +1698,7 @@ function usePrompt(promptId) {
   notify("success", "Prompt inséré.");
 }
 
-function deletePrompt(promptId) {
+function requestDeletePrompt(promptId) {
   const prompt = (state.settings.prompts || []).find((item) => item.id === promptId);
   if (!prompt) {
     notify("error", "Prompt introuvable.");
@@ -1505,6 +1708,19 @@ function deletePrompt(promptId) {
     notify("info", "Ce prompt par défaut ne peut pas être supprimé.");
     return;
   }
+  openDeleteModal({
+    title: "Supprimer le prompt",
+    text: `Supprimer le prompt rapide "${prompt.name}" ?`,
+    onConfirm: async () => deletePrompt(promptId),
+  });
+}
+
+function deletePrompt(promptId) {
+  const prompt = (state.settings.prompts || []).find((item) => item.id === promptId);
+  if (!prompt) {
+    notify("error", "Prompt introuvable.");
+    return false;
+  }
   const prompts = (state.settings.prompts || []).filter((item) => item.id !== promptId);
   state.settings.prompts = prompts;
   if (state.editingPromptId === promptId) {
@@ -1513,6 +1729,7 @@ function deletePrompt(promptId) {
   persistSettings();
   renderPromptList();
   notify("success", "Prompt supprimé.");
+  return true;
 }
 
 function onSavePrompt(event) {
@@ -1598,6 +1815,7 @@ function openRenameModal(session) {
   closeSidebar();
   closeCreateModal();
   closeConfigModal();
+  closeSecretsModal();
   closeDeleteModal();
   state.pendingRenameSessionId = session.id;
   elements.renameSessionInput.value = session.name || session.workspaceName || "";
@@ -1615,22 +1833,32 @@ function closeRenameModal() {
   elements.renameModal.setAttribute("aria-hidden", "true");
 }
 
-function openDeleteModal(session) {
+function openDeleteModal({ title = "Confirmation", text = "", confirmLabel = "Supprimer", onConfirm } = {}) {
   closeSidebar();
   closeMenuDrawer();
   closeCreateModal();
   closeConfigModal();
   closeRenameModal();
-  state.pendingDeleteSessionId = session.id;
-  elements.deleteModalText.textContent = `Supprimer la session "${session.name || session.workspaceName}" ?`;
+  state.pendingDeleteAction = typeof onConfirm === "function" ? onConfirm : null;
+  elements.deleteModalTitle.textContent = title;
+  elements.deleteModalText.textContent = text;
+  elements.confirmDeleteButton.textContent = confirmLabel;
   elements.deleteModal.classList.add("open");
   elements.deleteModal.setAttribute("aria-hidden", "false");
 }
 
 function closeDeleteModal() {
-  state.pendingDeleteSessionId = null;
+  state.pendingDeleteAction = null;
   elements.deleteModal.classList.remove("open");
   elements.deleteModal.setAttribute("aria-hidden", "true");
+}
+
+function openDeleteSessionModal(session) {
+  openDeleteModal({
+    title: "Supprimer la session",
+    text: `Supprimer la session "${session.name || session.workspaceName}" ?`,
+    onConfirm: async () => deleteSession(session.id),
+  });
 }
 
 function toggleSidebar() {
@@ -1794,10 +2022,9 @@ async function onRenameSession(event) {
   notify("success", "Nom de session mis a jour.");
 }
 
-async function onDeleteSession() {
-  const sessionId = state.pendingDeleteSessionId;
+async function deleteSession(sessionId) {
   if (!sessionId) {
-    return;
+    return false;
   }
 
   const response = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
@@ -1806,11 +2033,10 @@ async function onDeleteSession() {
 
   if (!response.ok) {
     notify("error", "Suppression impossible.");
-    return;
+    return false;
   }
 
   const payload = await response.json();
-  closeDeleteModal();
 
   if (state.activeSessionId === sessionId) {
     disconnectSocket();
@@ -1829,6 +2055,17 @@ async function onDeleteSession() {
   }
 
   notify("success", "Session supprimee.");
+  return true;
+}
+
+async function onConfirmDelete() {
+  if (typeof state.pendingDeleteAction !== "function") {
+    return;
+  }
+  const completed = await state.pendingDeleteAction();
+  if (completed !== false) {
+    closeDeleteModal();
+  }
 }
 
 function shortId(value) {
@@ -1985,8 +2222,7 @@ async function retryLastUserMessage() {
     return;
   }
 
-  const session = getActiveSession();
-  if (session?.status === "running") {
+  if (isActiveSessionRunning()) {
     notify("info", "Codex est deja en train de repondre.");
     return;
   }
@@ -2073,7 +2309,6 @@ async function onSaveConfig(event) {
   const theme = normalizeTheme(elements.themeValueInput.value || elements.themeSelect.value || state.settings.theme);
   const seconds = clampDuration(elements.notificationDurationInput.value);
   const workspaceRoot = String(elements.workspaceRootInput.value || "").trim() || "/projects";
-  const githubToken = String(elements.githubTokenInput.value || "").trim();
   const payload = {
     model: state.codexConfig.model,
     sandboxDangerFullAccess: elements.sandboxDangerInput.checked,
@@ -2085,7 +2320,7 @@ async function onSaveConfig(event) {
   const appResponse = await apiFetch("/api/config/app", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ workspaceRoot, githubToken }),
+    body: JSON.stringify({ workspaceRoot }),
   });
 
   if (!appResponse.ok) {
@@ -2109,7 +2344,6 @@ async function onSaveConfig(event) {
   const appConfigPayload = await appResponse.json();
   state.appConfig = {
     workspaceRoot: appConfigPayload.workspaceRoot || "/projects",
-    githubToken: appConfigPayload.githubToken || "",
   };
   state.codexConfig = await codexResponse.json();
 
@@ -2131,6 +2365,83 @@ async function onSaveConfig(event) {
   }
   closeConfigModal();
   notify("success", `Configuration enregistree. Notifications a ${seconds}s.`);
+}
+
+async function onSaveSecret(event) {
+  event.preventDefault();
+  const type = elements.secretTypeInput.value === "credentials" ? "credentials" : "value";
+  const key = String(elements.secretKeyInput.value || "").trim().toUpperCase();
+  const value = String(elements.secretValueInput.value || "");
+  const identifier = String(elements.secretIdentifierInput.value || "");
+  const password = String(elements.secretPasswordInput.value || "");
+
+  if (!key) {
+    notify("warning", "Clé de secret requise.");
+    return;
+  }
+
+  const editing = Boolean(state.editingSecretKey);
+  const endpoint = editing
+    ? `/api/secrets/${encodeURIComponent(state.editingSecretKey)}`
+    : "/api/secrets";
+  const method = editing ? "PATCH" : "POST";
+  const response = await apiFetch(endpoint, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key, type, value, identifier, password }),
+  });
+
+  if (response.status === 400) {
+    notify("warning", "Secret invalide.");
+    return;
+  }
+  if (response.status === 403) {
+    notify("error", "Ce secret est protégé.");
+    return;
+  }
+  if (!response.ok) {
+    notify("error", "Enregistrement du secret impossible.");
+    return;
+  }
+
+  await refreshSecrets();
+  renderSecretsList();
+  closeSecretEditorModal();
+  notify("success", editing ? "Secret mis à jour." : "Secret ajouté.");
+}
+
+function requestDeleteSecret(key) {
+  const secret = state.secrets.find((item) => item.key === key);
+  if (!secret) {
+    notify("error", "Secret introuvable.");
+    return;
+  }
+  openDeleteModal({
+    title: "Supprimer le secret",
+    text: `Supprimer le secret "${secret.key}" ?`,
+    onConfirm: async () => deleteSecret(secret.key),
+  });
+}
+
+async function deleteSecret(key) {
+  if (!key) {
+    return false;
+  }
+  const response = await apiFetch(`/api/secrets/${encodeURIComponent(key)}`, {
+    method: "DELETE",
+  });
+  if (response.status === 403) {
+    notify("error", "Ce secret est protégé.");
+    return false;
+  }
+  if (!response.ok) {
+    notify("error", "Suppression du secret impossible.");
+    return false;
+  }
+  await refreshSecrets();
+  renderSecretsList();
+  notify("success", "Secret supprimé.");
+  return true;
 }
 
 function defaultSettings() {

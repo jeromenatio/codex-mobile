@@ -179,13 +179,16 @@ test("suite e2e exhaustive hors voix", async (t) => {
     await clickDom(page, "#menuConfigButton");
     await page.fill("#notificationDurationInput", "9");
     await page.fill("#workspaceRootInput", ALT_WORKSPACE_ROOT);
-    await page.fill("#githubTokenInput", "ghp_ui_token");
     await setCheckbox(page, "#sandboxDangerInput", true);
     await setCheckbox(page, "#approvalNeverInput", true);
     await setCheckbox(page, "#hideFullAccessWarningInput", true);
     await setCheckbox(page, "#searchInput", true);
     await page.selectOption("#themeSelect", "arctic-glass");
-    await clickDom(page, "#saveConfigButton");
+    await page.locator("#configForm").evaluate((form) => form.requestSubmit());
+    await waitFor(async () => {
+      const config = await (await fetch(`${BASE_URL}/api/config/app`)).json();
+      assert.equal(config.workspaceRoot, ALT_WORKSPACE_ROOT);
+    });
     const currentTheme = await page.evaluate(() => document.documentElement.dataset.theme);
     assert.equal(currentTheme, "arctic-glass");
     assert.equal(fs.existsSync(ALT_WORKSPACE_ROOT), true);
@@ -196,16 +199,44 @@ test("suite e2e exhaustive hors voix", async (t) => {
       assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "arctic-glass");
     }, 5000);
 
-    await openSidebar(page);
-    await expectText(page.locator("#sessionList"), "Aucune session.");
-
     await openMenu(page);
     await clickDom(page, "#menuConfigButton");
-    await expectValue(page.locator("#githubTokenInput"), "ghp_ui_token");
+    await expectValue(page.locator("#workspaceRootInput"), ALT_WORKSPACE_ROOT);
     await page.fill("#workspaceRootInput", WORKSPACE_ROOT);
-    await clickDom(page, "#saveConfigButton");
+    await page.locator("#configForm").evaluate((form) => form.requestSubmit());
+    await waitFor(async () => {
+      const config = await (await fetch(`${BASE_URL}/api/config/app`)).json();
+      assert.equal(config.workspaceRoot, WORKSPACE_ROOT);
+    });
     await openSidebar(page);
     await expectText(page.locator("#sessionList"), "alpha-suite");
+
+    await openMenu(page);
+    await clickDom(page, "#menuSecretsButton");
+    await clickDom(page, "#openCreateSecretButton");
+    await page.fill("#secretKeyInput", "GITHUB_TOKEN");
+    await page.fill("#secretValueInput", "ghp_ui_token");
+    await clickDom(page, "#secretEditorForm .primary-button");
+    await expectText(page.locator("#secretsList"), "GITHUB_TOKEN");
+    const githubTokenSecret = page.locator(".secret-item").filter({ hasText: "GITHUB_TOKEN" });
+    await clickDom(githubTokenSecret.locator("[data-secret-delete]"));
+    await expectText(page.locator("#deleteModalText"), "GITHUB_TOKEN");
+    await clickDom(page, "#cancelDeleteModal");
+    await expectText(page.locator("#secretsList"), "GITHUB_TOKEN");
+
+    await clickDom(page, "#openCreateSecretButton");
+    await page.selectOption("#secretTypeInput", "credentials");
+    await page.fill("#secretKeyInput", "HETZNER");
+    await page.fill("#secretIdentifierInput", "hetzner-id");
+    await page.fill("#secretPasswordInput", "hetzner-password");
+    await clickDom(page, "#secretEditorForm .primary-button");
+    await expectText(page.locator("#secretsList"), "HETZNER");
+    await clickDom(githubTokenSecret.locator("[data-secret-delete]"));
+    await expectText(page.locator("#deleteModalText"), "GITHUB_TOKEN");
+    await clickDom(page, "#confirmDeleteButton");
+    await waitFor(async () => {
+      assert.equal((await page.locator("#secretsList").innerText()).includes("GITHUB_TOKEN"), false);
+    });
 
     await clickDom(page, "#openModelModal");
     await waitFor(async () => {
@@ -278,6 +309,12 @@ test("suite e2e exhaustive hors voix", async (t) => {
 
     await clickDom(page, "#openPromptModal");
     await clickDom(page.locator(".prompt-item").filter({ hasText: "Résumé" }).locator("[data-prompt-action='delete']"));
+    await expectText(page.locator("#deleteModalText"), "Résumé");
+    await clickDom(page, "#cancelDeleteModal");
+    await expectText(page.locator("#promptList"), "Résumé");
+    await clickDom(page.locator(".prompt-item").filter({ hasText: "Résumé" }).locator("[data-prompt-action='delete']"));
+    await expectText(page.locator("#deleteModalText"), "Résumé");
+    await clickDom(page, "#confirmDeleteButton");
     await expectText(page.locator("#promptList"), "Commit & push");
 
     await page.reload({ waitUntil: "domcontentloaded" });

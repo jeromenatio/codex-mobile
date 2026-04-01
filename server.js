@@ -36,6 +36,7 @@ const AUTH_TOKEN = String(process.env.CODEX_MOBILE_AUTH_TOKEN || "").trim();
 const AUTH_ENABLED = (FORCE_AUTH || !TEST_MODE) && Boolean(AUTH_TOKEN);
 const AUTH_COOKIE_NAME = "codex_mobile_auth";
 const AUTH_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
+const RESERVED_SECRET_KEYS = new Set(["CODEX_MOBILE_AUTH_TOKEN"]);
 
 const app = express();
 const server = http.createServer(app);
@@ -184,8 +185,16 @@ function registerRoutes() {
   app.get("/api/config/app", (_req, res) => {
     res.json({
       workspaceRoot: getWorkspaceRoot(),
-      githubToken: String(process.env.GITHUB_TOKEN || ""),
     });
+  });
+
+  app.get("/api/secrets", async (_req, res) => {
+    try {
+      res.json({ secrets: await listSecrets(CODEX_MOBILE_ENV_FILE) });
+    } catch (error) {
+      console.error("Failed to list secrets:", error);
+      res.status(500).json({ error: error.message || "Failed to list secrets" });
+    }
   });
 
   app.get("/api/ui-state", (_req, res) => {
@@ -200,22 +209,136 @@ function registerRoutes() {
   app.put("/api/config/app", async (req, res) => {
     try {
       const workspaceRoot = normalizeWorkspaceRoot(req.body?.workspaceRoot);
-      const incomingGithubToken = String(req.body?.githubToken || "").trim();
-      const currentGithubToken = String(process.env.GITHUB_TOKEN || "").trim();
-      const githubToken = incomingGithubToken || currentGithubToken;
       await fsp.mkdir(workspaceRoot, { recursive: true });
-      await upsertEnvValue(CODEX_MOBILE_ENV_FILE, "GITHUB_TOKEN", githubToken);
-      process.env.GITHUB_TOKEN = githubToken;
       persistedState.appConfig = { workspaceRoot };
       const visibleSessions = persistedState.sessions.filter((session) => isSessionInWorkspaceRoot(session));
       persistedState.lastSessionId = visibleSessions.some((session) => session.id === persistedState.lastSessionId)
         ? persistedState.lastSessionId
         : visibleSessions[0]?.id || null;
       await saveState();
-      res.json({ workspaceRoot, githubToken, bootstrap: buildBootstrap() });
+      res.json({ workspaceRoot, bootstrap: buildBootstrap() });
     } catch (error) {
       console.error("Failed to update app config:", error);
       res.status(500).json({ error: error.message || "Failed to update app config" });
+    }
+  });
+
+  app.post("/api/secrets", async (req, res) => {
+    try {
+      const key = normalizeSecretKey(req.body?.key);
+      const type = normalizeSecretType(req.body?.type);
+      const value = String(req.body?.value || "");
+      const identifier = String(req.body?.identifier || "");
+      const password = String(req.body?.password || "");
+      if (!key || !value) {
+        if (type === "value") {
+          return res.status(400).json({ error: "key and value are required" });
+        }
+      }
+      if (!key || (type === "credentials" && (!identifier || !password))) {
+        return res.status(400).json({ error: "invalid secret payload" });
+      }
+      if (RESERVED_SECRET_KEYS.has(key)) {
+        return res.status(403).json({ error: "Reserved secret key" });
+      }
+      if (type === "credentials") {
+        await removeEnvValue(CODEX_MOBILE_ENV_FILE, key);
+        delete process.env[key];
+        await upsertEnvValue(CODEX_MOBILE_ENV_FILE, `${key}_ID`, identifier);
+        await upsertEnvValue(CODEX_MOBILE_ENV_FILE, `${key}_PASSWORD`, password);
+        process.env[`${key}_ID`] = identifier;
+        process.env[`${key}_PASSWORD`] = password;
+      } else {
+        await removeEnvValue(CODEX_MOBILE_ENV_FILE, `${key}_ID`);
+        await removeEnvValue(CODEX_MOBILE_ENV_FILE, `${key}_PASSWORD`);
+        delete process.env[`${key}_ID`];
+        delete process.env[`${key}_PASSWORD`];
+        await upsertEnvValue(CODEX_MOBILE_ENV_FILE, key, value);
+        process.env[key] = value;
+      }
+      res.status(201).json({ secret: { key, type, hasValue: true } });
+    } catch (error) {
+      console.error("Failed to create secret:", error);
+      res.status(500).json({ error: error.message || "Failed to create secret" });
+    }
+  });
+
+  app.patch("/api/secrets/:key", async (req, res) => {
+    try {
+      const currentKey = normalizeSecretKey(req.params.key);
+      const nextKey = normalizeSecretKey(req.body?.key || currentKey);
+      const type = normalizeSecretType(req.body?.type);
+      const nextValue = String(req.body?.value || "");
+      const nextIdentifier = String(req.body?.identifier || "");
+      const nextPassword = String(req.body?.password || "");
+      if (!currentKey || !nextKey) {
+        return res.status(400).json({ error: "invalid key" });
+      }
+      if (RESERVED_SECRET_KEYS.has(currentKey) || RESERVED_SECRET_KEYS.has(nextKey)) {
+        return res.status(403).json({ error: "Reserved secret key" });
+      }
+
+      const envMap = await readEnvMap(CODEX_MOBILE_ENV_FILE);
+      const currentSecret = resolveSecretFromEnv(envMap, currentKey);
+      if (!currentSecret) {
+        return res.status(404).json({ error: "Secret not found" });
+      }
+      const nextType = type || currentSecret.type;
+
+      if (currentSecret.type === "credentials") {
+        await removeEnvValue(CODEX_MOBILE_ENV_FILE, `${currentKey}_ID`);
+        await removeEnvValue(CODEX_MOBILE_ENV_FILE, `${currentKey}_PASSWORD`);
+        delete process.env[`${currentKey}_ID`];
+        delete process.env[`${currentKey}_PASSWORD`];
+      } else {
+        await removeEnvValue(CODEX_MOBILE_ENV_FILE, currentKey);
+        delete process.env[currentKey];
+      }
+
+      if (nextType === "credentials") {
+        const identifier = nextIdentifier || currentSecret.identifier || "";
+        const password = nextPassword || currentSecret.password || "";
+        if (!identifier || !password) {
+          return res.status(400).json({ error: "identifier and password are required" });
+        }
+        await upsertEnvValue(CODEX_MOBILE_ENV_FILE, `${nextKey}_ID`, identifier);
+        await upsertEnvValue(CODEX_MOBILE_ENV_FILE, `${nextKey}_PASSWORD`, password);
+        process.env[`${nextKey}_ID`] = identifier;
+        process.env[`${nextKey}_PASSWORD`] = password;
+      } else {
+        const preservedValue = nextValue || currentSecret.value || "";
+        if (!preservedValue) {
+          return res.status(400).json({ error: "value is required" });
+        }
+        await upsertEnvValue(CODEX_MOBILE_ENV_FILE, nextKey, preservedValue);
+        process.env[nextKey] = preservedValue;
+      }
+      res.json({ secret: { key: nextKey, type: nextType, hasValue: true } });
+    } catch (error) {
+      console.error("Failed to update secret:", error);
+      res.status(500).json({ error: error.message || "Failed to update secret" });
+    }
+  });
+
+  app.delete("/api/secrets/:key", async (req, res) => {
+    try {
+      const key = normalizeSecretKey(req.params.key);
+      if (!key) {
+        return res.status(400).json({ error: "invalid key" });
+      }
+      if (RESERVED_SECRET_KEYS.has(key)) {
+        return res.status(403).json({ error: "Reserved secret key" });
+      }
+      await removeEnvValue(CODEX_MOBILE_ENV_FILE, key);
+      await removeEnvValue(CODEX_MOBILE_ENV_FILE, `${key}_ID`);
+      await removeEnvValue(CODEX_MOBILE_ENV_FILE, `${key}_PASSWORD`);
+      delete process.env[key];
+      delete process.env[`${key}_ID`];
+      delete process.env[`${key}_PASSWORD`];
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Failed to delete secret:", error);
+      res.status(500).json({ error: error.message || "Failed to delete secret" });
     }
   });
 
@@ -896,25 +1019,8 @@ function broadcastToSession(sessionId, message) {
 
 function loadEnvFile(envFile) {
   try {
-    if (!envFile || !fs.existsSync(envFile)) {
-      return;
-    }
-
-    const lines = fs.readFileSync(envFile, "utf8").split(/\r?\n/);
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) {
-        continue;
-      }
-
-      const separatorIndex = trimmed.indexOf("=");
-      if (separatorIndex === -1) {
-        continue;
-      }
-
-      const key = trimmed.slice(0, separatorIndex).trim();
-      const rawValue = trimmed.slice(separatorIndex + 1).trim();
-      const value = rawValue.replace(/^['"]|['"]$/g, "");
+    const entries = readEnvEntriesSync(envFile);
+    for (const [key, value] of entries) {
       if (key && !(key in process.env)) {
         process.env[key] = value;
       }
@@ -922,6 +1028,88 @@ function loadEnvFile(envFile) {
   } catch (error) {
     console.error("Failed to load env file:", error);
   }
+}
+
+function readEnvEntriesSync(envFile) {
+  if (!envFile || !fs.existsSync(envFile)) {
+    return [];
+  }
+
+  const lines = fs.readFileSync(envFile, "utf8").split(/\r?\n/);
+  const entries = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = trimmed.indexOf("=");
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const key = trimmed.slice(0, separatorIndex).trim();
+    const rawValue = trimmed.slice(separatorIndex + 1).trim();
+    const value = rawValue.replace(/^['"]|['"]$/g, "");
+    entries.push([key, value]);
+  }
+  return entries;
+}
+
+async function readEnvMap(envFile) {
+  try {
+    const entries = readEnvEntriesSync(envFile);
+    return new Map(entries);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+  return new Map();
+}
+
+async function listSecrets(envFile) {
+  const map = await readEnvMap(envFile);
+  const consumed = new Set();
+  const secrets = [];
+
+  for (const [key, value] of map.entries()) {
+    if (!key || RESERVED_SECRET_KEYS.has(key) || consumed.has(key)) {
+      continue;
+    }
+
+    if (key.endsWith("_ID")) {
+      const baseKey = key.slice(0, -3);
+      const passwordKey = `${baseKey}_PASSWORD`;
+      if (!RESERVED_SECRET_KEYS.has(baseKey) && map.has(passwordKey)) {
+        consumed.add(key);
+        consumed.add(passwordKey);
+        secrets.push({
+          key: baseKey,
+          type: "credentials",
+          hasValue: Boolean(String(value || "")) && Boolean(String(map.get(passwordKey) || "")),
+        });
+        continue;
+      }
+    }
+
+    if (key.endsWith("_PASSWORD")) {
+      const baseKey = key.slice(0, -9);
+      const idKey = `${baseKey}_ID`;
+      if (!RESERVED_SECRET_KEYS.has(baseKey) && map.has(idKey)) {
+        continue;
+      }
+    }
+
+    secrets.push({
+      key,
+      type: "value",
+      hasValue: Boolean(String(value || "")),
+    });
+  }
+
+  return secrets.sort((a, b) => a.key.localeCompare(b.key));
 }
 
 async function upsertEnvValue(envFile, key, value) {
@@ -959,6 +1147,59 @@ async function upsertEnvValue(envFile, key, value) {
 
   const serialized = `${nextLines.join("\n").replace(/\n+$/u, "")}\n`;
   await fsp.writeFile(targetPath, serialized, "utf8");
+}
+
+async function removeEnvValue(envFile, key) {
+  const targetPath = path.resolve(envFile);
+  let source = "";
+  try {
+    source = await fsp.readFile(targetPath, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+
+  const lines = source ? source.split(/\r?\n/) : [];
+  const nextLines = lines.filter((line) => !line.startsWith(`${key}=`));
+  const serialized = `${nextLines.join("\n").replace(/\n+$/u, "")}\n`;
+  await fsp.writeFile(targetPath, serialized, "utf8");
+}
+
+function normalizeSecretKey(value) {
+  const key = String(value || "").trim().toUpperCase();
+  if (!/^[A-Z][A-Z0-9_]*$/.test(key)) {
+    return "";
+  }
+  return key;
+}
+
+function normalizeSecretType(value) {
+  return String(value || "").trim() === "credentials" ? "credentials" : "value";
+}
+
+function resolveSecretFromEnv(envMap, key) {
+  if (envMap.has(key)) {
+    return {
+      key,
+      type: "value",
+      value: String(envMap.get(key) || ""),
+    };
+  }
+
+  const idKey = `${key}_ID`;
+  const passwordKey = `${key}_PASSWORD`;
+  if (envMap.has(idKey) || envMap.has(passwordKey)) {
+    return {
+      key,
+      type: "credentials",
+      identifier: String(envMap.get(idKey) || ""),
+      password: String(envMap.get(passwordKey) || ""),
+    };
+  }
+
+  return null;
 }
 
 function parseCookies(cookieHeader) {

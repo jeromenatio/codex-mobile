@@ -77,8 +77,14 @@
           </div>
           <div id="sessionList" class="session-list"></div>
           <div class="sidebar-footer sidebar-stats">
-            <span id="sessionCount" class="pill">0 session</span>
-            <span id="workspaceCount" class="pill">0 workspace</span>
+            <div class="sidebar-stats-copy">
+              <span id="sessionCount" class="pill">0 session</span>
+              <span id="workspaceCount" class="pill">0 workspace</span>
+            </div>
+            <button id="menuNewSessionButton" class="ghost-button sidebar-create-button" type="button">
+              <i class="bi bi-plus-lg" aria-hidden="true"></i>
+              <span>Nouvelle</span>
+            </button>
           </div>
         </section>
       </aside>
@@ -97,17 +103,17 @@
             </div>
           </div>
           <div class="menu-list">
-            <button id="menuNewSessionButton" class="menu-action" type="button">
-              <span class="menu-copy">
-                <strong>Nouvelle session</strong>
-              </span>
-              <i class="bi bi-plus-lg" aria-hidden="true"></i>
-            </button>
             <button id="menuConfigButton" class="menu-action" type="button">
               <span class="menu-copy">
                 <strong>Configuration</strong>
               </span>
               <i class="bi bi-gear-fill" aria-hidden="true"></i>
+            </button>
+            <button id="menuSecretsButton" class="menu-action" type="button">
+              <span class="menu-copy">
+                <strong>Secrets</strong>
+              </span>
+              <i class="bi bi-key-fill" aria-hidden="true"></i>
             </button>
             <button id="menuExportSessionButton" class="menu-action" type="button">
               <span class="menu-copy">
@@ -229,12 +235,6 @@
                   <strong>Dossier racine</strong>
                 </span>
                 <input id="workspaceRootInput" class="setting-input setting-input-wide" name="workspaceRoot" type="text" placeholder="/projects" />
-              </label>
-              <label class="setting-row setting-row-wide">
-                <span class="switch-copy">
-                  <strong>Token GitHub</strong>
-                </span>
-                <input id="githubTokenInput" class="setting-input setting-input-wide" name="githubToken" type="password" placeholder="ghp_..." autocomplete="off" spellcheck="false" />
               </label>
               </section>
               <section class="settings-group">
@@ -362,6 +362,71 @@
         </div>
       </section>
 
+      <section id="secretsModal" class="modal-layer" aria-hidden="true">
+        <div id="secretsBackdrop" class="modal-backdrop"></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="secretsModalTitle">
+          <div class="modal-header section-title">
+            <h2 id="secretsModalTitle">Secrets</h2>
+            <button id="closeSecretsModal" class="icon-button plain-button" type="button" aria-label="Fermer">
+              <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
+            </button>
+          </div>
+          <div class="modal-body">
+            <div id="secretsList" class="prompt-list"></div>
+          </div>
+          <div class="modal-actions modal-footer">
+            <button id="openCreateSecretButton" class="ghost-button" type="button">+ Nouveau</button>
+            <button id="doneSecretsModalButton" class="primary-button" type="button">Terminer</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="secretEditorModal" class="modal-layer stacked-modal" aria-hidden="true">
+        <div id="secretEditorBackdrop" class="modal-backdrop"></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="secretEditorModalTitle">
+          <div class="modal-header section-title">
+            <h2 id="secretEditorModalTitle">Nouveau secret</h2>
+            <button id="closeSecretEditorModal" class="icon-button plain-button" type="button" aria-label="Fermer">
+              <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
+            </button>
+          </div>
+          <form id="secretEditorForm" class="stack modal-form">
+            <div class="modal-body">
+              <label class="setting-row">
+                <span class="switch-copy">
+                  <strong>Format</strong>
+                </span>
+                <select id="secretTypeInput" class="setting-input setting-select" name="secretType">
+                  <option value="value">Clé + valeur</option>
+                  <option value="credentials">Clé + identifiants</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Clé</span>
+                <input id="secretKeyInput" name="secretKey" type="text" placeholder="GITHUB_TOKEN" autocomplete="off" spellcheck="false" required />
+              </label>
+              <label id="secretValueField" class="field">
+                <span>Valeur</span>
+                <input id="secretValueInput" name="secretValue" type="password" placeholder="Valeur du secret" autocomplete="off" spellcheck="false" />
+              </label>
+              <label id="secretIdentifierField" class="field">
+                <span>Identifiant</span>
+                <input id="secretIdentifierInput" name="secretIdentifier" type="text" placeholder="Identifiant" autocomplete="off" spellcheck="false" />
+              </label>
+              <label id="secretPasswordField" class="field">
+                <span>Mot de passe</span>
+                <input id="secretPasswordInput" name="secretPassword" type="password" placeholder="Mot de passe" autocomplete="off" spellcheck="false" />
+              </label>
+              <p id="secretEditorHint" class="field-hint">La valeur n'est jamais affichée dans la liste.</p>
+            </div>
+            <div class="modal-actions modal-footer">
+              <button id="cancelSecretEditor" class="ghost-button" type="button">Annuler</button>
+              <button class="primary-button" type="submit">Enregistrer</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
       <section id="promptEditorModal" class="modal-layer stacked-modal" aria-hidden="true">
         <div id="promptEditorBackdrop" class="modal-backdrop"></div>
         <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="promptEditorModalTitle">
@@ -437,7 +502,7 @@
         <div id="deleteBackdrop" class="modal-backdrop"></div>
         <div class="modal-card modal-card-sm" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
           <div class="modal-header section-title">
-            <h2 id="deleteModalTitle">Supprimer la session</h2>
+            <h2 id="deleteModalTitle">Confirmation</h2>
             <button id="closeDeleteModal" class="icon-button plain-button" type="button" aria-label="Fermer">
               <i class="bi bi-x-lg icon-glyph" aria-hidden="true"></i>
             </button>
