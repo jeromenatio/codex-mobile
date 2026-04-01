@@ -3,8 +3,9 @@ set -euo pipefail
 
 SERVICE_NAME="${SERVICE_NAME:-codex-mobile}"
 APP_DIR="${APP_DIR:-/projects/codex-mobile}"
-RUN_USER="${RUN_USER:-root}"
-RUN_GROUP="${RUN_GROUP:-root}"
+RUN_USER="${RUN_USER:-${SUDO_USER:-root}}"
+RUN_GROUP="${RUN_GROUP:-$(id -gn "${RUN_USER}" 2>/dev/null || echo root)}"
+RUN_HOME="${RUN_HOME:-$(getent passwd "${RUN_USER}" | cut -d: -f6)}"
 PORT="${PORT:-4180}"
 SERVICE_QUIET="${SERVICE_QUIET:-0}"
 NODE_BIN="${NODE_BIN:-$(command -v node)}"
@@ -52,6 +53,8 @@ Group=${RUN_GROUP}
 WorkingDirectory=${APP_DIR}
 Environment=NODE_ENV=production
 Environment=PORT=${PORT}
+Environment=HOME=${RUN_HOME}
+Environment=CODEX_HOME=${RUN_HOME}/.codex
 Environment=CODEX_MOBILE_ENV_FILE=/etc/codex-mobile/.env
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=${NODE_BIN} ${NPM_BIN} start

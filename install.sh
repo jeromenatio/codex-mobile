@@ -11,6 +11,9 @@ SERVICE_INSTALL="${SERVICE_INSTALL:-yes}"
 AUTH_TOKEN_VALUE=""
 NODE_BIN=""
 NPM_BIN=""
+INSTALL_USER="${SUDO_USER:-$(id -un)}"
+INSTALL_GROUP="$(id -gn "${INSTALL_USER}")"
+INSTALL_HOME="$(getent passwd "${INSTALL_USER}" | cut -d: -f6)"
 
 if ! command -v sudo >/dev/null 2>&1 && [[ "${EUID}" -ne 0 ]]; then
   echo "sudo est requis pour lancer l'installation." >&2
@@ -22,6 +25,16 @@ run_root() {
     "$@"
   else
     sudo "$@"
+  fi
+}
+
+run_owner() {
+  if [[ "${INSTALL_USER}" == "root" ]]; then
+    run_root "$@"
+  elif [[ "${EUID}" -eq 0 ]]; then
+    sudo -u "${INSTALL_USER}" -H "$@"
+  else
+    "$@"
   fi
 }
 
@@ -79,10 +92,11 @@ install_codex_if_needed() {
 
 ensure_repo() {
   run_root mkdir -p "$(dirname "${APP_DIR}")"
+  run_root chown "${INSTALL_USER}:${INSTALL_GROUP}" "$(dirname "${APP_DIR}")"
 
   if [[ -d "${APP_DIR}/.git" ]]; then
-    git -C "${APP_DIR}" fetch --all --prune
-    git -C "${APP_DIR}" pull --ff-only
+    run_owner git -C "${APP_DIR}" fetch --all --prune
+    run_owner git -C "${APP_DIR}" pull --ff-only
     return
   fi
 
@@ -91,14 +105,14 @@ ensure_repo() {
     exit 1
   fi
 
-  git clone "${REPO_URL}" "${APP_DIR}"
+  run_owner git clone "${REPO_URL}" "${APP_DIR}"
 }
 
 install_project_dependencies() {
   cd "${APP_DIR}"
   local node_bin="${NODE_BIN:-$(command -v node)}"
   local npm_bin="${NPM_BIN:-$(command -v npm)}"
-  "${node_bin}" "${npm_bin}" install
+  run_owner "${node_bin}" "${npm_bin}" install
 }
 
 prompt_workspace_root() {
@@ -119,6 +133,7 @@ generate_token() {
 
 write_env_file() {
   run_root mkdir -p "${CODEX_MOBILE_INSTALL_ENV_DIR}"
+  run_root chown "${INSTALL_USER}:${INSTALL_GROUP}" "${CODEX_MOBILE_INSTALL_ENV_DIR}"
   local auth_token existing_github
   auth_token="$(generate_token)"
   AUTH_TOKEN_VALUE="${auth_token}"
@@ -131,6 +146,7 @@ write_env_file() {
   fi
 
   run_root touch "${CODEX_MOBILE_INSTALL_ENV_FILE}"
+  run_root chown "${INSTALL_USER}:${INSTALL_GROUP}" "${CODEX_MOBILE_INSTALL_ENV_FILE}"
   run_root chmod 600 "${CODEX_MOBILE_INSTALL_ENV_FILE}"
   run_root bash -lc "cat > '${CODEX_MOBILE_INSTALL_ENV_FILE}' <<'EOF'
 CODEX_MOBILE_AUTH_TOKEN=${auth_token}
@@ -144,11 +160,11 @@ initialize_database() {
     echo "node introuvable pour l'initialisation de la base." >&2
     exit 1
   fi
-  run_root mkdir -p "${APP_DIR}/data"
+  run_owner mkdir -p "${APP_DIR}/data"
   (
     cd "${APP_DIR}"
-    run_root mkdir -p "${WORKSPACE_ROOT}"
-    run_root env \
+    run_owner mkdir -p "${WORKSPACE_ROOT}"
+    run_owner env \
       CODEX_MOBILE_DATA_DIR="${APP_DIR}/data" \
       CODEX_MOBILE_DEFAULT_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
       "${node_bin}" ./scripts/init-db.js
@@ -192,7 +208,12 @@ install_service_if_requested() {
     (
       cd "${APP_DIR}"
       run_root chmod +x ./service.sh
-      run_root env SERVICE_QUIET=1 ./service.sh
+      run_root env \
+        SERVICE_QUIET=1 \
+        RUN_USER="${INSTALL_USER}" \
+        RUN_GROUP="${INSTALL_GROUP}" \
+        RUN_HOME="${INSTALL_HOME}" \
+        ./service.sh
     )
   fi
 }

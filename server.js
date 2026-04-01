@@ -2,6 +2,7 @@ const express = require("express");
 const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
+const os = require("os");
 const crypto = require("crypto");
 const http = require("http");
 const { spawn, spawnSync } = require("child_process");
@@ -26,8 +27,10 @@ const STATE_FILE = process.env.CODEX_MOBILE_STATE_FILE || path.join(DATA_DIR, "s
 const DB_FILE = process.env.CODEX_MOBILE_DB_FILE || path.join(DATA_DIR, "codex-mobile.sqlite");
 const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
 const DEFAULT_WORKSPACE_ROOT = process.env.CODEX_MOBILE_DEFAULT_WORKSPACE_ROOT || "/projects";
-const CODEX_CONFIG_FILE = process.env.CODEX_MOBILE_CONFIG_FILE || "/root/.codex/config.toml";
-const CODEX_MODELS_CACHE_FILE = process.env.CODEX_MOBILE_MODELS_CACHE_FILE || "/root/.codex/models_cache.json";
+const CODEX_HOME_DIR = process.env.CODEX_HOME || path.join(process.env.HOME || os.homedir(), ".codex");
+const CODEX_CONFIG_FILE = process.env.CODEX_MOBILE_CONFIG_FILE || path.join(CODEX_HOME_DIR, "config.toml");
+const CODEX_MODELS_CACHE_FILE = process.env.CODEX_MOBILE_MODELS_CACHE_FILE || path.join(CODEX_HOME_DIR, "models_cache.json");
+const CODEX_THREADS_DB_FILE = process.env.CODEX_MOBILE_THREADS_DB_FILE || path.join(CODEX_HOME_DIR, "state_5.sqlite");
 const CODEX_MOBILE_ENV_FILE = process.env.CODEX_MOBILE_ENV_FILE || "/etc/codex-mobile/.env";
 const AUTH_TOKEN = String(process.env.CODEX_MOBILE_AUTH_TOKEN || "").trim();
 const AUTH_ENABLED = (FORCE_AUTH || !TEST_MODE) && Boolean(AUTH_TOKEN);
@@ -378,7 +381,11 @@ function registerRoutes() {
       await appendUserMessage(session, text, attachments);
       runSessionTurn(session, text, attachments);
 
-      res.json({ ok: true, session: sanitizeSession(session) });
+      res.json({
+        ok: true,
+        session: sanitizeSession(session),
+        messages: serializeSessionForExport(session).messages,
+      });
     } catch (error) {
       console.error("Failed to send message:", error);
       res.status(500).json({ error: error.message || "Failed to send message" });
@@ -405,7 +412,11 @@ function registerRoutes() {
       await appendUserMessage(session, sourceMessage.text || "", attachments);
       runSessionTurn(session, sourceMessage.text || "", attachments);
 
-      res.json({ ok: true, session: sanitizeSession(session) });
+      res.json({
+        ok: true,
+        session: sanitizeSession(session),
+        messages: serializeSessionForExport(session).messages,
+      });
     } catch (error) {
       console.error("Failed to retry session:", error);
       res.status(500).json({ error: error.message || "Failed to retry session" });
@@ -1373,7 +1384,7 @@ function readCodexThreads(workspaceRoot) {
 import json, sqlite3
 from pathlib import Path
 
-db = Path("/root/.codex/state_5.sqlite")
+db = Path(${JSON.stringify(CODEX_THREADS_DB_FILE)})
 if not db.exists():
     print("[]")
     raise SystemExit(0)
@@ -1510,7 +1521,7 @@ async function hydrateSessionMessages(session) {
 function lookupRolloutPath(threadId) {
   const script = `
 import sqlite3
-con = sqlite3.connect("/root/.codex/state_5.sqlite")
+con = sqlite3.connect(${JSON.stringify(CODEX_THREADS_DB_FILE)})
 cur = con.cursor()
 row = cur.execute("select rollout_path from threads where id = ?", ("${threadId}",)).fetchone()
 print(row[0] if row else "")

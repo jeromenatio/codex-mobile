@@ -812,6 +812,14 @@ async function onSendMessage(event) {
     notify("error", "Envoi du message impossible.");
     return;
   }
+
+  const payload = await response.json();
+  if (state.activeSessionId === payload.session?.id) {
+    state.messages = Array.isArray(payload.messages) ? payload.messages : state.messages;
+    upsertSessionSummary(payload.session);
+    updateHeader(payload.session);
+    renderMessages(true);
+  }
 }
 
 function renderMessages(shouldScroll = false) {
@@ -1998,6 +2006,14 @@ async function retryLastUserMessage() {
   if (!response.ok) {
     notify("error", "Relance impossible.");
     return;
+  }
+
+  const payload = await response.json();
+  if (state.activeSessionId === payload.session?.id) {
+    state.messages = Array.isArray(payload.messages) ? payload.messages : state.messages;
+    upsertSessionSummary(payload.session);
+    updateHeader(payload.session);
+    renderMessages(true);
   }
 
   notify("success", "Tour relancé.");
