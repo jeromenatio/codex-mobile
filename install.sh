@@ -197,6 +197,18 @@ install_service_if_requested() {
   fi
 }
 
+detect_server_ip() {
+  local ip=""
+  ip="$(curl -fsSL --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+  if [[ -n "${ip}" ]]; then
+    printf '%s\n' "${ip}"
+    return
+  fi
+
+  ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  printf '%s\n' "${ip}"
+}
+
 main() {
   echo "==> Installation de Codex Mobile"
   install_base_packages
@@ -215,6 +227,9 @@ main() {
   echo "Projet: ${APP_DIR}"
   echo "Root workspaces: ${WORKSPACE_ROOT}"
   echo "Env: ${CODEX_MOBILE_INSTALL_ENV_FILE}"
+  echo
+  echo "IP:"
+  echo "$(detect_server_ip)"
   echo
   echo "Token d'acces:"
   echo "${AUTH_TOKEN_VALUE}"
