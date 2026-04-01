@@ -114,8 +114,10 @@ write_env_file() {
   AUTH_TOKEN_VALUE="${auth_token}"
   existing_github=""
 
-  if [[ -f "${CODEX_MOBILE_INSTALL_ENV_FILE}" ]]; then
-    existing_github="$(sed -n 's/^GITHUB_TOKEN=//p' "${CODEX_MOBILE_INSTALL_ENV_FILE}" | head -n 1)"
+  if run_root test -f "${CODEX_MOBILE_INSTALL_ENV_FILE}"; then
+    existing_github="$(
+      run_root bash -lc "sed -n 's/^GITHUB_TOKEN=//p' '${CODEX_MOBILE_INSTALL_ENV_FILE}' | head -n 1"
+    )"
   fi
 
   run_root touch "${CODEX_MOBILE_INSTALL_ENV_FILE}"
