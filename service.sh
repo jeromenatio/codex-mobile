@@ -53,7 +53,7 @@ Environment=NODE_ENV=production
 Environment=PORT=${PORT}
 Environment=CODEX_MOBILE_ENV_FILE=/etc/codex-mobile/.env
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=${NPM_BIN} start
+ExecStart=${NODE_BIN} ${NPM_BIN} start
 Restart=always
 RestartSec=3
 TimeoutStopSec=15

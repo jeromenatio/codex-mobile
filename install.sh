@@ -10,6 +10,7 @@ CODEX_MOBILE_INSTALL_ENV_FILE="${CODEX_MOBILE_INSTALL_ENV_FILE:-${CODEX_MOBILE_I
 SERVICE_INSTALL="${SERVICE_INSTALL:-yes}"
 AUTH_TOKEN_VALUE=""
 NODE_BIN=""
+NPM_BIN=""
 
 if ! command -v sudo >/dev/null 2>&1 && [[ "${EUID}" -ne 0 ]]; then
   echo "sudo est requis pour lancer l'installation." >&2
@@ -53,6 +54,7 @@ install_base_packages() {
 install_node_if_needed() {
   if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
     NODE_BIN="$(command -v node)"
+    NPM_BIN="$(command -v npm)"
     return
   fi
 
@@ -63,13 +65,16 @@ install_node_if_needed() {
   fi
   run_root apt install -y nodejs
   NODE_BIN="$(command -v node)"
+  NPM_BIN="$(command -v npm)"
 }
 
 install_codex_if_needed() {
+  local node_bin="${NODE_BIN:-$(command -v node)}"
+  local npm_bin="${NPM_BIN:-$(command -v npm)}"
   if command -v codex >/dev/null 2>&1; then
     return
   fi
-  run_root npm install -g @openai/codex
+  run_root "${node_bin}" "${npm_bin}" install -g @openai/codex
 }
 
 ensure_repo() {
@@ -91,7 +96,9 @@ ensure_repo() {
 
 install_project_dependencies() {
   cd "${APP_DIR}"
-  npm install
+  local node_bin="${NODE_BIN:-$(command -v node)}"
+  local npm_bin="${NPM_BIN:-$(command -v npm)}"
+  "${node_bin}" "${npm_bin}" install
 }
 
 prompt_workspace_root() {
