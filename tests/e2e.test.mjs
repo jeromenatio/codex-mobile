@@ -309,6 +309,28 @@ test("suite e2e exhaustive hors voix", async (t) => {
     await context.close();
     });
 
+    await t.test("export de session depuis le menu", async () => {
+      const { page, context } = await newPage();
+    await activateSessionFromDrawer(page, "alpha-suite");
+
+    await sendMessage(page, "message exportable");
+    await expectText(page.locator(".bubble.assistant").last(), "Réponse de test");
+
+    await openMenu(page);
+    const downloadPromise = page.waitForEvent("download");
+    await clickDom(page, "#menuExportSessionButton");
+    const download = await downloadPromise;
+    assert.match(download.suggestedFilename(), /alpha-suite\.json$/i);
+    const filePath = await download.path();
+    const exportedText = await fsp.readFile(filePath, "utf8");
+    const exported = JSON.parse(exportedText);
+    assert.equal(exported.session.workspaceName, "alpha-suite");
+    assert.equal(Array.isArray(exported.session.messages), true);
+    assert.equal(exported.session.messages.some((message) => message.text === "message exportable"), true);
+
+    await context.close();
+    });
+
     await t.test("prompts rapides CRUD et insertion", async () => {
       const { page, context } = await newPage();
     await activateSessionFromDrawer(page, "alpha-suite");
@@ -412,6 +434,7 @@ async function stopServer() {
 
 async function newPage() {
   const context = await browser.newContext({
+    acceptDownloads: true,
     permissions: ["clipboard-read", "clipboard-write"],
   });
   const page = await context.newPage();

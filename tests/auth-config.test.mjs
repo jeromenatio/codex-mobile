@@ -263,6 +263,18 @@ test("auth et configuration app", async () => {
     assert.equal(retried.messages[3].role, "assistant");
     assert.equal(retried.messages[3].pending, true);
 
+    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/export`, {
+      headers: { cookie },
+    });
+    assert.equal(response.status, 200);
+    const exported = await response.json();
+    assert.equal(typeof exported.exportedAt, "string");
+    assert.equal(exported.session.id, created.session.id);
+    assert.equal(exported.session.workspaceName, "api-suite");
+    assert.equal(Array.isArray(exported.session.messages), true);
+    assert.equal(exported.session.messages.length, 4);
+    assert.equal(exported.session.messages[0].text, "bonjour");
+
     response = await fetch(`${BASE_URL}/api/auth/logout`, {
       method: "POST",
       headers: { cookie },
