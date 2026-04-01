@@ -184,7 +184,9 @@ test("suite e2e exhaustive hors voix", async (t) => {
     await setCheckbox(page, "#hideFullAccessWarningInput", true);
     await setCheckbox(page, "#searchInput", true);
     await page.selectOption("#themeSelect", "arctic-glass");
-    await page.locator("#configForm").evaluate((form) => form.requestSubmit());
+    await page.locator("#configForm").evaluate((form) => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
     await waitFor(async () => {
       const config = await (await fetch(`${BASE_URL}/api/config/app`)).json();
       assert.equal(config.workspaceRoot, ALT_WORKSPACE_ROOT);
@@ -200,10 +202,16 @@ test("suite e2e exhaustive hors voix", async (t) => {
     }, 5000);
 
     await openMenu(page);
+    await clickDom(page, "#menuSessionsButton");
+    await waitFor(async () => {
+      assert.equal(await page.locator("#sidebar").evaluate((node) => node.classList.contains("open")), true);
+    });
     await clickDom(page, "#menuConfigButton");
     await expectValue(page.locator("#workspaceRootInput"), ALT_WORKSPACE_ROOT);
     await page.fill("#workspaceRootInput", WORKSPACE_ROOT);
-    await page.locator("#configForm").evaluate((form) => form.requestSubmit());
+    await page.locator("#configForm").evaluate((form) => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
     await waitFor(async () => {
       const config = await (await fetch(`${BASE_URL}/api/config/app`)).json();
       assert.equal(config.workspaceRoot, WORKSPACE_ROOT);
@@ -213,7 +221,13 @@ test("suite e2e exhaustive hors voix", async (t) => {
 
     await openMenu(page);
     await clickDom(page, "#menuSecretsButton");
+    await expectText(page.locator("#secretsList"), "CODEX_MOBILE_AUTH_TOKEN");
+    const authTokenSecret = page.locator(".secret-item").filter({ hasText: "CODEX_MOBILE_AUTH_TOKEN" });
+    await expectAttr(authTokenSecret.locator("[data-secret-delete]"), "disabled", "");
     await clickDom(page, "#openCreateSecretButton");
+    assert.equal(await page.locator("#secretValueField").evaluate((node) => node.hidden), false);
+    assert.equal(await page.locator("#secretIdentifierField").evaluate((node) => node.hidden), true);
+    assert.equal(await page.locator("#secretPasswordField").evaluate((node) => node.hidden), true);
     await page.fill("#secretKeyInput", "GITHUB_TOKEN");
     await page.fill("#secretValueInput", "ghp_ui_token");
     await clickDom(page, "#secretEditorForm .primary-button");
@@ -226,6 +240,11 @@ test("suite e2e exhaustive hors voix", async (t) => {
 
     await clickDom(page, "#openCreateSecretButton");
     await page.selectOption("#secretTypeInput", "credentials");
+    await waitFor(async () => {
+      assert.equal(await page.locator("#secretValueField").evaluate((node) => node.hidden), true);
+      assert.equal(await page.locator("#secretIdentifierField").evaluate((node) => node.hidden), false);
+      assert.equal(await page.locator("#secretPasswordField").evaluate((node) => node.hidden), false);
+    });
     await page.fill("#secretKeyInput", "HETZNER");
     await page.fill("#secretIdentifierInput", "hetzner-id");
     await page.fill("#secretPasswordInput", "hetzner-password");
@@ -237,6 +256,12 @@ test("suite e2e exhaustive hors voix", async (t) => {
     await waitFor(async () => {
       assert.equal((await page.locator("#secretsList").innerText()).includes("GITHUB_TOKEN"), false);
     });
+
+    await clickDom(authTokenSecret.locator(".secret-actions [data-secret-edit]"));
+    await expectAttr(page.locator("#secretKeyInput"), "disabled", "");
+    await page.fill("#secretValueInput", "rotated-auth-token");
+    await clickDom(page, "#secretEditorForm .primary-button");
+    await expectText(page.locator("#secretsList"), "CODEX_MOBILE_AUTH_TOKEN");
 
     await clickDom(page, "#openModelModal");
     await waitFor(async () => {

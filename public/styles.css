@@ -1828,9 +1828,13 @@ textarea {
 }
 
 .secret-item {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
   padding: 10px 12px;
   border-radius: 18px;
   background: transparent;
@@ -1838,8 +1842,10 @@ textarea {
 }
 
 .secret-main {
-  flex: 1 1 auto;
+  display: block;
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   padding: 0;
   border: 0;
   background: transparent;
@@ -1848,11 +1854,14 @@ textarea {
 }
 
 .secret-copy {
+  width: 100%;
   min-width: 0;
 }
 
 .secret-copy strong {
   display: block;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1862,8 +1871,10 @@ textarea {
 .secret-meta {
   display: flex;
   align-items: center;
+  flex-wrap: nowrap;
   gap: 8px;
   min-width: 0;
+  overflow: hidden;
   margin-top: 6px;
 }
 
@@ -1872,6 +1883,18 @@ textarea {
   align-items: center;
   gap: 6px;
   flex: 0 0 auto;
+  align-self: start;
+}
+
+.secret-meta .mini-badge i {
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+.secret-meta .mini-badge:first-child {
+  width: 94px;
+  justify-content: center;
+  text-align: center;
 }
 
 .prompt-empty {

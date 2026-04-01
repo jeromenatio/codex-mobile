@@ -274,7 +274,11 @@ function registerRoutes() {
       if (!currentKey || !nextKey) {
         return res.status(400).json({ error: "invalid key" });
       }
-      if (RESERVED_SECRET_KEYS.has(currentKey) || RESERVED_SECRET_KEYS.has(nextKey)) {
+      const editingReserved = RESERVED_SECRET_KEYS.has(currentKey);
+      if (editingReserved && currentKey !== nextKey) {
+        return res.status(403).json({ error: "Reserved secret key" });
+      }
+      if (!editingReserved && RESERVED_SECRET_KEYS.has(nextKey)) {
         return res.status(403).json({ error: "Reserved secret key" });
       }
 
@@ -1075,7 +1079,7 @@ async function listSecrets(envFile) {
   const secrets = [];
 
   for (const [key, value] of map.entries()) {
-    if (!key || RESERVED_SECRET_KEYS.has(key) || consumed.has(key)) {
+    if (!key || consumed.has(key)) {
       continue;
     }
 
@@ -1089,6 +1093,9 @@ async function listSecrets(envFile) {
           key: baseKey,
           type: "credentials",
           hasValue: Boolean(String(value || "")) && Boolean(String(map.get(passwordKey) || "")),
+          protected: RESERVED_SECRET_KEYS.has(baseKey),
+          canDelete: !RESERVED_SECRET_KEYS.has(baseKey),
+          canEditKey: !RESERVED_SECRET_KEYS.has(baseKey),
         });
         continue;
       }
@@ -1106,6 +1113,9 @@ async function listSecrets(envFile) {
       key,
       type: "value",
       hasValue: Boolean(String(value || "")),
+      protected: RESERVED_SECRET_KEYS.has(key),
+      canDelete: !RESERVED_SECRET_KEYS.has(key),
+      canEditKey: !RESERVED_SECRET_KEYS.has(key),
     });
   }
 

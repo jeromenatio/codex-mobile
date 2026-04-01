@@ -1003,19 +1003,19 @@ function updateHeader(session) {
   elements.activeMessageCount.textContent = session ? `${session.messageCount || 0} msg` : "";
   elements.activeWorkspace.textContent = session ? session.workspaceName || "" : "";
   elements.activeSessionName.textContent = session ? session.name || session.workspaceName || "" : "";
-  const status = session?.status || "idle";
+  const running = Boolean(session) && isActiveSessionRunning();
+  const status = running ? "running" : session?.status || "idle";
   elements.messageInput.disabled = status === "running";
   elements.pickImagesButton.disabled = status === "running";
   elements.clearComposerButton.disabled = status === "running";
   elements.openSttModal.disabled = status === "running";
   elements.sendButton.disabled = !session;
-  renderSendButton(session);
-  renderComposerStatus(session);
+  renderSendButton(session, running);
+  renderComposerStatus(session, running);
   elements.composerStatus.className = `composer-status badge-status ${status === "idle" ? "idle" : "live"}`;
 }
 
-function renderSendButton(session) {
-  const running = session?.status === "running";
+function renderSendButton(session, running = Boolean(session) && isActiveSessionRunning()) {
   elements.sendButton.setAttribute("aria-label", running ? "Interrompre" : "Envoyer");
   elements.sendButton.title = running ? "Interrompre Codex" : "Envoyer";
   elements.sendButton.classList.toggle("stop-mode", running);
@@ -1168,7 +1168,7 @@ function openEditSecretEditor(secret) {
   elements.secretEditorModalTitle.textContent = "Modifier le secret";
   elements.secretTypeInput.value = secret.type || "value";
   elements.secretKeyInput.value = secret.key;
-  elements.secretKeyInput.disabled = false;
+  elements.secretKeyInput.disabled = secret.canEditKey === false;
   elements.secretValueInput.value = "";
   elements.secretIdentifierInput.value = "";
   elements.secretPasswordInput.value = "";
@@ -1223,14 +1223,18 @@ function renderSecretsList() {
   }
 
   elements.secretsList.innerHTML = state.secrets
-    .map((secret) => `
+    .map((secret) => {
+      const deleteDisabled = secret.canDelete === false ? " disabled aria-disabled=\"true\"" : "";
+      const deleteDisabledClass = secret.canDelete === false ? " is-disabled" : "";
+      return `
       <article class="secret-item">
         <button class="secret-main" type="button" data-secret-edit="${escapeHtml(secret.key)}">
           <div class="secret-copy">
-            <strong>${escapeHtml(secret.key)}</strong>
+            <strong title="${escapeHtml(secret.key)}">${escapeHtml(secret.key)}</strong>
             <div class="secret-meta">
               <span class="mini-badge muted">${secret.type === "credentials" ? "Identifiants" : "Valeur"}</span>
-              <span class="mini-badge ${secret.hasValue ? "live" : "muted"}">${secret.hasValue ? "Enregistré" : "Vide"}</span>
+              <span class="mini-badge ${secret.hasValue ? "live" : "muted"}" title="${secret.hasValue ? "Enregistré" : "Vide"}">${secret.hasValue ? '<i class="bi bi-floppy-fill" aria-hidden="true"></i>' : "Vide"}</span>
+              ${secret.protected ? '<span class="mini-badge muted" title="Protégé"><i class="bi bi-shield-lock-fill" aria-hidden="true"></i></span>' : ""}
             </div>
           </div>
         </button>
@@ -1238,12 +1242,13 @@ function renderSecretsList() {
           <button class="icon-button plain-button" type="button" data-secret-edit="${escapeHtml(secret.key)}" aria-label="Modifier ${escapeHtml(secret.key)}">
             <i class="bi bi-pencil-fill icon-glyph" aria-hidden="true"></i>
           </button>
-          <button class="icon-button plain-button" type="button" data-secret-delete="${escapeHtml(secret.key)}" aria-label="Supprimer ${escapeHtml(secret.key)}">
+          <button class="icon-button plain-button${deleteDisabledClass}" type="button" data-secret-delete="${escapeHtml(secret.key)}" aria-label="Supprimer ${escapeHtml(secret.key)}"${deleteDisabled}>
             <i class="bi bi-trash3-fill icon-glyph" aria-hidden="true"></i>
           </button>
         </div>
       </article>
-    `)
+    `;
+    })
     .join("");
 
   for (const button of elements.secretsList.querySelectorAll("[data-secret-edit]")) {
@@ -1257,6 +1262,9 @@ function renderSecretsList() {
 
   for (const button of elements.secretsList.querySelectorAll("[data-secret-delete]")) {
     button.addEventListener("click", () => {
+      if (button.disabled) {
+        return;
+      }
       requestDeleteSecret(button.dataset.secretDelete);
     });
   }
@@ -2284,8 +2292,8 @@ function removePendingImage(imageId) {
   renderComposerStatus(state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null);
 }
 
-function buildComposerStatus(session) {
-  const sessionStatus = session?.status || "idle";
+function buildComposerStatus(session, running = Boolean(session) && isActiveSessionRunning()) {
+  const sessionStatus = running ? "running" : session?.status || "idle";
   const base = session ? sessionStatus : "Aucune session";
   if (!state.pendingAttachments.length) {
     return base;
@@ -2293,9 +2301,9 @@ function buildComposerStatus(session) {
   return `${base} · ${state.pendingAttachments.length} image${state.pendingAttachments.length > 1 ? "s" : ""}`;
 }
 
-function renderComposerStatus(session) {
-  const status = session?.status || "idle";
-  const label = escapeHtml(buildComposerStatus(session));
+function renderComposerStatus(session, running = Boolean(session) && isActiveSessionRunning()) {
+  const status = running ? "running" : session?.status || "idle";
+  const label = escapeHtml(buildComposerStatus(session, running));
   const loading = status === "running" ? '<span class="loading-inline loading-inline-sm" aria-hidden="true"></span>' : "";
   elements.composerStatus.innerHTML = `${loading}<span>${label}</span>`;
 }

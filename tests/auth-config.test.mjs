@@ -109,6 +109,37 @@ test("auth et configuration app", async () => {
     const listedSecrets = await response.json();
     assert.equal(Array.isArray(listedSecrets.secrets), true);
     assert.equal(listedSecrets.secrets.some((item) => item.key === "GITHUB_TOKEN"), true);
+    const authTokenSecret = listedSecrets.secrets.find((item) => item.key === "CODEX_MOBILE_AUTH_TOKEN");
+    assert.equal(Boolean(authTokenSecret), true);
+    assert.equal(authTokenSecret?.protected, true);
+    assert.equal(authTokenSecret?.canDelete, false);
+    assert.equal(authTokenSecret?.canEditKey, false);
+
+    response = await fetch(`${BASE_URL}/api/secrets/CODEX_MOBILE_AUTH_TOKEN`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ key: "CODEX_MOBILE_AUTH_TOKEN", value: "updated-auth-token" }),
+    });
+    assert.equal(response.status, 200);
+
+    response = await fetch(`${BASE_URL}/api/secrets/CODEX_MOBILE_AUTH_TOKEN`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ key: "RENAMED_AUTH_TOKEN", value: "forbidden" }),
+    });
+    assert.equal(response.status, 403);
+
+    response = await fetch(`${BASE_URL}/api/secrets/CODEX_MOBILE_AUTH_TOKEN`, {
+      method: "DELETE",
+      headers: { cookie },
+    });
+    assert.equal(response.status, 403);
 
     const nextGithubToken = "ghp_updated_test_token";
     response = await fetch(`${BASE_URL}/api/secrets/GITHUB_TOKEN`, {
@@ -182,7 +213,7 @@ test("auth et configuration app", async () => {
 
     const envText = await fsp.readFile(ENV_FILE, "utf8");
     assert.match(envText, /^GITHUB_TOKEN=ghp_updated_test_token$/m);
-    assert.match(envText, /^CODEX_MOBILE_AUTH_TOKEN=test-auth-token$/m);
+    assert.match(envText, /^CODEX_MOBILE_AUTH_TOKEN=updated-auth-token$/m);
     assert.doesNotMatch(envText, /^OVH_TOKEN=/m);
     assert.match(envText, /^HETZNER_ID=hz-id$/m);
     assert.match(envText, /^HETZNER_PASSWORD=hz-pass-2$/m);
