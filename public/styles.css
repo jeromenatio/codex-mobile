@@ -1354,13 +1354,46 @@ textarea {
 .markdown-body pre {
   max-width: 100%;
   overflow: auto;
-  padding: 12px;
+  padding: 38px 12px 12px 12px;
   border-radius: 14px;
   background: var(--pre-bg);
 }
 
 .bubble.user .markdown-body pre {
   background: var(--pre-user-bg);
+}
+
+.code-block {
+  position: relative;
+  display: block;
+}
+
+.code-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.45rem;
+  height: 1.45rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: 0.58;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.code-copy:hover,
+.code-copy:focus-visible {
+  opacity: 0.94;
+}
+
+.code-copy i {
+  font-size: 0.98rem;
+  line-height: 1;
 }
 
 .markdown-body pre code {

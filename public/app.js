@@ -867,11 +867,47 @@ function renderMessages(shouldScroll = false) {
     });
   }
 
+  enhanceCodeBlocks();
+
   if (shouldScroll) {
     if (Date.now() < state.manualScrollLockUntil) {
       return;
     }
     elements.messages.scrollTop = elements.messages.scrollHeight;
+  }
+}
+
+function enhanceCodeBlocks() {
+  for (const pre of elements.messages.querySelectorAll(".markdown-body pre")) {
+    if (pre.parentElement?.classList.contains("code-block")) {
+      continue;
+    }
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "code-block";
+    pre.parentNode.insertBefore(wrapper, pre);
+    wrapper.append(pre);
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "code-copy";
+    button.setAttribute("aria-label", "Copier le bloc de code");
+    button.innerHTML = '<i class="bi bi-copy" aria-hidden="true"></i>';
+    button.addEventListener("click", async () => {
+      const codeText = pre.querySelector("code")?.innerText || pre.innerText || "";
+      const text = codeText.trim();
+      if (!text) {
+        notify("warning", "Bloc de code vide.");
+        return;
+      }
+      try {
+        await writeClipboardText(text);
+        notify("success", "Code copié.");
+      } catch {
+        notify("error", "Copie du code impossible.");
+      }
+    });
+    wrapper.append(button);
   }
 }
 
@@ -1811,6 +1847,37 @@ function renderMarkdown(value) {
   return marked.parse(String(value || ""));
 }
 
+async function writeClipboardText(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fallback below for insecure contexts and older mobile browsers.
+    }
+  }
+
+  const helper = document.createElement("textarea");
+  helper.value = text;
+  helper.setAttribute("readonly", "");
+  helper.style.position = "fixed";
+  helper.style.top = "-9999px";
+  helper.style.opacity = "0";
+  document.body.append(helper);
+  helper.focus();
+  helper.select();
+  helper.setSelectionRange(0, helper.value.length);
+
+  try {
+    const copied = document.execCommand("copy");
+    if (!copied) {
+      throw new Error("copy failed");
+    }
+  } finally {
+    helper.remove();
+  }
+}
+
 async function copyMessageToClipboard(messageId) {
   const message = state.messages.find((item) => item.id === messageId);
   if (!message) {
@@ -1825,7 +1892,7 @@ async function copyMessageToClipboard(messageId) {
   }
 
   try {
-    await navigator.clipboard.writeText(content);
+    await writeClipboardText(content);
     notify("success", "Message copié.");
   } catch (error) {
     notify("error", "Copie impossible.");
