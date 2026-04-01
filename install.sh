@@ -9,6 +9,7 @@ CODEX_MOBILE_INSTALL_ENV_DIR="${CODEX_MOBILE_INSTALL_ENV_DIR:-/etc/codex-mobile}
 CODEX_MOBILE_INSTALL_ENV_FILE="${CODEX_MOBILE_INSTALL_ENV_FILE:-${CODEX_MOBILE_INSTALL_ENV_DIR}/.env}"
 SERVICE_INSTALL="${SERVICE_INSTALL:-yes}"
 AUTH_TOKEN_VALUE=""
+NODE_BIN=""
 
 if ! command -v sudo >/dev/null 2>&1 && [[ "${EUID}" -ne 0 ]]; then
   echo "sudo est requis pour lancer l'installation." >&2
@@ -51,6 +52,7 @@ install_base_packages() {
 
 install_node_if_needed() {
   if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+    NODE_BIN="$(command -v node)"
     return
   fi
 
@@ -60,6 +62,7 @@ install_node_if_needed() {
     curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
   fi
   run_root apt install -y nodejs
+  NODE_BIN="$(command -v node)"
 }
 
 install_codex_if_needed() {
@@ -129,6 +132,11 @@ EOF"
 }
 
 initialize_database() {
+  local node_bin="${NODE_BIN:-$(command -v node)}"
+  if [[ -z "${node_bin}" ]]; then
+    echo "node introuvable pour l'initialisation de la base." >&2
+    exit 1
+  fi
   run_root mkdir -p "${APP_DIR}/data"
   (
     cd "${APP_DIR}"
@@ -136,7 +144,7 @@ initialize_database() {
     run_root env \
       CODEX_MOBILE_DATA_DIR="${APP_DIR}/data" \
       CODEX_MOBILE_DEFAULT_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
-      node ./scripts/init-db.js
+      "${node_bin}" ./scripts/init-db.js
   )
 }
 
