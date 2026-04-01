@@ -5,8 +5,8 @@ trap 'echo; echo "Installation interrompue." >&2; exit 130' INT TERM
 REPO_URL="${REPO_URL:-https://github.com/jeromenatio/codex-mobile.git}"
 APP_DIR="${APP_DIR:-/projects/codex-mobile}"
 DEFAULT_WORKSPACE_ROOT="${DEFAULT_WORKSPACE_ROOT:-/projects}"
-ENV_DIR="${ENV_DIR:-/etc/codex-mobile}"
-ENV_FILE="${ENV_FILE:-${ENV_DIR}/.env}"
+CODEX_MOBILE_INSTALL_ENV_DIR="${CODEX_MOBILE_INSTALL_ENV_DIR:-/etc/codex-mobile}"
+CODEX_MOBILE_INSTALL_ENV_FILE="${CODEX_MOBILE_INSTALL_ENV_FILE:-${CODEX_MOBILE_INSTALL_ENV_DIR}/.env}"
 SERVICE_INSTALL="${SERVICE_INSTALL:-yes}"
 AUTH_TOKEN_VALUE=""
 
@@ -108,19 +108,19 @@ generate_token() {
 }
 
 write_env_file() {
-  run_root mkdir -p "${ENV_DIR}"
+  run_root mkdir -p "${CODEX_MOBILE_INSTALL_ENV_DIR}"
   local auth_token existing_github
   auth_token="$(generate_token)"
   AUTH_TOKEN_VALUE="${auth_token}"
   existing_github=""
 
-  if [[ -f "${ENV_FILE}" ]]; then
-    existing_github="$(sed -n 's/^GITHUB_TOKEN=//p' "${ENV_FILE}" | head -n 1)"
+  if [[ -f "${CODEX_MOBILE_INSTALL_ENV_FILE}" ]]; then
+    existing_github="$(sed -n 's/^GITHUB_TOKEN=//p' "${CODEX_MOBILE_INSTALL_ENV_FILE}" | head -n 1)"
   fi
 
-  run_root touch "${ENV_FILE}"
-  run_root chmod 600 "${ENV_FILE}"
-  run_root bash -lc "cat > '${ENV_FILE}' <<'EOF'
+  run_root touch "${CODEX_MOBILE_INSTALL_ENV_FILE}"
+  run_root chmod 600 "${CODEX_MOBILE_INSTALL_ENV_FILE}"
+  run_root bash -lc "cat > '${CODEX_MOBILE_INSTALL_ENV_FILE}' <<'EOF'
 CODEX_MOBILE_AUTH_TOKEN=${auth_token}
 GITHUB_TOKEN=${existing_github}
 EOF"
@@ -197,12 +197,12 @@ main() {
   echo "Installation terminee."
   echo "Projet: ${APP_DIR}"
   echo "Root workspaces: ${WORKSPACE_ROOT}"
-  echo "Env: ${ENV_FILE}"
+  echo "Env: ${CODEX_MOBILE_INSTALL_ENV_FILE}"
   echo
   echo "Token d'acces:"
   echo "${AUTH_TOKEN_VALUE}"
   echo
-  echo "Tu peux le retrouver plus tard dans ${ENV_FILE}"
+  echo "Tu peux le retrouver plus tard dans ${CODEX_MOBILE_INSTALL_ENV_FILE}"
   echo
   echo "Si tu n'as pas installe le service systemd, lance ensuite:"
   echo "cd ${APP_DIR} && npm start"

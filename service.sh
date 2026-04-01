@@ -51,6 +51,7 @@ Group=${RUN_GROUP}
 WorkingDirectory=${APP_DIR}
 Environment=NODE_ENV=production
 Environment=PORT=${PORT}
+Environment=CODEX_MOBILE_ENV_FILE=/etc/codex-mobile/.env
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=${NPM_BIN} start
 Restart=always
