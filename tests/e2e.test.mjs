@@ -16,6 +16,9 @@ const WORKSPACE_ROOT = path.join(TMP_ROOT, "workspaces-a");
 const ALT_WORKSPACE_ROOT = path.join(TMP_ROOT, "workspaces-b");
 const CONFIG_FILE = path.join(TMP_ROOT, "codex-config.toml");
 const MODELS_CACHE_FILE = path.join(TMP_ROOT, "models-cache.json");
+const RUNTIME_SOCKET_FILE = path.join(TMP_ROOT, "runtime.sock");
+const RUNTIME_STATE_FILE = path.join(TMP_ROOT, "runtime-state.json");
+const RUNTIME_PID_FILE = path.join(TMP_ROOT, "runtime.pid");
 
 let serverProcess;
 let browser;
@@ -398,6 +401,9 @@ async function startServer() {
       CODEX_MOBILE_DEFAULT_WORKSPACE_ROOT: WORKSPACE_ROOT,
       CODEX_MOBILE_CONFIG_FILE: CONFIG_FILE,
       CODEX_MOBILE_MODELS_CACHE_FILE: MODELS_CACHE_FILE,
+      CODEX_MOBILE_RUNTIME_SOCKET: RUNTIME_SOCKET_FILE,
+      CODEX_MOBILE_RUNTIME_STATE_FILE: RUNTIME_STATE_FILE,
+      CODEX_MOBILE_RUNTIME_PID_FILE: RUNTIME_PID_FILE,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -423,6 +429,7 @@ async function startServer() {
 
 async function stopServer() {
   if (!serverProcess) {
+    await stopRuntime();
     return;
   }
   serverProcess.kill("SIGTERM");
@@ -430,6 +437,20 @@ async function stopServer() {
   if (!serverProcess.killed) {
     serverProcess.kill("SIGKILL");
   }
+  await stopRuntime();
+}
+
+async function stopRuntime() {
+  try {
+    const pidText = await fsp.readFile(RUNTIME_PID_FILE, "utf8");
+    const pid = Number(String(pidText).trim());
+    if (pid > 0) {
+      process.kill(pid, "SIGTERM");
+      await delay(300);
+    }
+  } catch {}
+  await fsp.rm(RUNTIME_PID_FILE, { force: true }).catch(() => {});
+  await fsp.rm(RUNTIME_SOCKET_FILE, { force: true }).catch(() => {});
 }
 
 async function newPage() {

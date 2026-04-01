@@ -15,6 +15,9 @@ const WORKSPACE_ROOT = path.join(TMP_ROOT, "workspaces");
 const CONFIG_FILE = path.join(TMP_ROOT, "codex-config.toml");
 const MODELS_CACHE_FILE = path.join(TMP_ROOT, "models-cache.json");
 const ENV_FILE = path.join(TMP_ROOT, "codex-mobile.env");
+const RUNTIME_SOCKET_FILE = path.join(TMP_ROOT, "runtime.sock");
+const RUNTIME_STATE_FILE = path.join(TMP_ROOT, "runtime-state.json");
+const RUNTIME_PID_FILE = path.join(TMP_ROOT, "runtime.pid");
 const AUTH_TOKEN = "test-auth-token";
 const INITIAL_GITHUB_TOKEN = "ghp_initial_test_token";
 
@@ -248,7 +251,19 @@ test("auth et configuration app", async () => {
     assert.equal(sent.messages[1].role, "assistant");
     assert.equal(sent.messages[1].pending, true);
 
-    await delay(300);
+    let firstTurnComplete = false;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/export`, {
+        headers: { cookie },
+      });
+      const snapshot = await response.json();
+      if (!snapshot.session.messages.at(-1)?.pending) {
+        firstTurnComplete = true;
+        break;
+      }
+      await delay(150);
+    }
+    assert.equal(firstTurnComplete, true);
 
     response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/retry`, {
       method: "POST",
@@ -275,15 +290,66 @@ test("auth et configuration app", async () => {
     assert.equal(exported.session.messages.length, 4);
     assert.equal(exported.session.messages[0].text, "bonjour");
 
+    let retryTurnComplete = false;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/export`, {
+        headers: { cookie },
+      });
+      const snapshot = await response.json();
+      if (!snapshot.session.messages.at(-1)?.pending) {
+        retryTurnComplete = true;
+        break;
+      }
+      await delay(150);
+    }
+    assert.equal(retryTurnComplete, true);
+
+    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/message`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ text: "__SLOW__", attachments: [] }),
+    });
+    assert.equal(response.status, 200);
+    await delay(300);
+
+    await stopServer({ preserveRuntime: true });
+    await startServer();
+
+    response = await fetch(`${BASE_URL}/api/bootstrap`, {
+      headers: { cookie },
+    });
+    assert.equal(response.status, 200);
+    const resumedBootstrap = await response.json();
+    const resumedSession = resumedBootstrap.sessions.find((item) => item.id === created.session.id);
+    assert.equal(resumedSession?.status, "running");
+
+    const resumeDeadline = Date.now() + 10000;
+    let completedSlowTurn = false;
+    while (Date.now() < resumeDeadline) {
+      response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/export`, {
+        headers: { cookie },
+      });
+      const resumedExport = await response.json();
+      const lastMessage = resumedExport.session.messages.at(-1);
+      if (lastMessage && !lastMessage.pending) {
+        assert.match(lastMessage.text, /Réponse de test: __SLOW__/);
+        completedSlowTurn = true;
+        break;
+      }
+      await delay(200);
+    }
+    assert.equal(completedSlowTurn, true);
+
     response = await fetch(`${BASE_URL}/api/auth/logout`, {
       method: "POST",
       headers: { cookie },
     });
     assert.equal(response.status, 200);
 
-    response = await fetch(`${BASE_URL}/api/bootstrap`, {
-      headers: { cookie },
-    });
+    response = await fetch(`${BASE_URL}/api/bootstrap`);
     assert.equal(response.status, 401);
   } finally {
     await stopServer();
@@ -312,6 +378,9 @@ async function startServer() {
       CODEX_MOBILE_CONFIG_FILE: CONFIG_FILE,
       CODEX_MOBILE_MODELS_CACHE_FILE: MODELS_CACHE_FILE,
       CODEX_MOBILE_ENV_FILE: ENV_FILE,
+      CODEX_MOBILE_RUNTIME_SOCKET: RUNTIME_SOCKET_FILE,
+      CODEX_MOBILE_RUNTIME_STATE_FILE: RUNTIME_STATE_FILE,
+      CODEX_MOBILE_RUNTIME_PID_FILE: RUNTIME_PID_FILE,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -319,7 +388,7 @@ async function startServer() {
   await waitForServer();
 }
 
-async function stopServer() {
+async function stopServer({ preserveRuntime = false } = {}) {
   if (!serverProcess) {
     return;
   }
@@ -333,6 +402,23 @@ async function stopServer() {
 
   processRef.kill("SIGTERM");
   await new Promise((resolve) => processRef.once("exit", resolve));
+
+  if (!preserveRuntime) {
+    await stopRuntime();
+  }
+}
+
+async function stopRuntime() {
+  try {
+    const pidText = await fsp.readFile(RUNTIME_PID_FILE, "utf8");
+    const pid = Number(String(pidText).trim());
+    if (pid > 0) {
+      process.kill(pid, "SIGTERM");
+      await delay(300);
+    }
+  } catch {}
+  await fsp.rm(RUNTIME_PID_FILE, { force: true }).catch(() => {});
+  await fsp.rm(RUNTIME_SOCKET_FILE, { force: true }).catch(() => {});
 }
 
 async function waitForServer() {

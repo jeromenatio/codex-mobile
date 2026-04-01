@@ -26,6 +26,9 @@ const DATA_DIR = process.env.CODEX_MOBILE_DATA_DIR || path.join(ROOT_DIR, "data"
 const STATE_FILE = process.env.CODEX_MOBILE_STATE_FILE || path.join(DATA_DIR, "state.json");
 const DB_FILE = process.env.CODEX_MOBILE_DB_FILE || path.join(DATA_DIR, "codex-mobile.sqlite");
 const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
+const RUNTIME_SOCKET_FILE = process.env.CODEX_MOBILE_RUNTIME_SOCKET || path.join(DATA_DIR, "runtime.sock");
+const RUNTIME_STATE_FILE = process.env.CODEX_MOBILE_RUNTIME_STATE_FILE || path.join(DATA_DIR, "runtime-state.json");
+const RUNTIME_PID_FILE = process.env.CODEX_MOBILE_RUNTIME_PID_FILE || path.join(DATA_DIR, "runtime.pid");
 const DEFAULT_WORKSPACE_ROOT = process.env.CODEX_MOBILE_DEFAULT_WORKSPACE_ROOT || "/projects";
 const CODEX_HOME_DIR = process.env.CODEX_HOME || path.join(process.env.HOME || os.homedir(), ".codex");
 const CODEX_CONFIG_FILE = process.env.CODEX_MOBILE_CONFIG_FILE || path.join(CODEX_HOME_DIR, "config.toml");
@@ -54,9 +57,10 @@ app.use(express.static(path.join(ROOT_DIR, "public"), {
 }));
 
 const runtimes = new Map();
-const authSessions = new Map();
 const database = createDatabase(DB_FILE, DEFAULT_WORKSPACE_ROOT, STATE_FILE);
 let persistedState = database.loadState();
+let runtimeSyncTimer = null;
+let runtimeSyncInFlight = false;
 
 boot().catch((error) => {
   console.error("Boot failed:", error);
@@ -73,33 +77,21 @@ async function boot() {
   persistedState.appConfig = normalizeAppConfig(persistedState.appConfig);
   persistedState.uiState = normalizeUiState(persistedState.uiState);
   await fsp.mkdir(getWorkspaceRoot(), { recursive: true });
-
-  let changed = false;
   for (const session of persistedState.sessions) {
     session.messages = Array.isArray(session.messages) ? session.messages : [];
     session.name = typeof session.name === "string" && session.name.trim() ? session.name.trim() : session.workspaceName;
-
-    const lastMessage = session.messages.at(-1);
-    if (session.status === "running") {
-      session.status = "interrupted";
-      session.updatedAt = new Date().toISOString();
-      changed = true;
-    }
-
-    if (session.status === "interrupted" && lastMessage?.role === "assistant" && lastMessage?.pending) {
-      lastMessage.pending = false;
-      lastMessage.text = lastMessage.text?.trim() || "Réponse interrompue après rechargement du serveur.";
-      changed = true;
-    }
   }
 
-  if (changed) {
-    await saveState();
-  }
+  await ensureRuntimeService();
+  await syncRuntimeState({ boot: true });
 
   if (!DISABLE_EXTERNAL_SYNC) {
     syncExternalCodexSessions();
   }
+
+  runtimeSyncTimer = setInterval(() => {
+    void syncRuntimeState();
+  }, 250);
 
   registerRoutes();
   registerWebsocket();
@@ -110,6 +102,11 @@ async function boot() {
 }
 
 function registerRoutes() {
+  app.get("/api/health", async (_req, res) => {
+    const runtimeOk = await pingRuntime();
+    res.json({ ok: true, runtimeOk });
+  });
+
   app.get("/api/auth/status", (req, res) => {
     res.json({
       enabled: AUTH_ENABLED,
@@ -133,10 +130,6 @@ function registerRoutes() {
   });
 
   app.post("/api/auth/logout", (req, res) => {
-    const sessionId = parseCookies(req.headers.cookie || "")[AUTH_COOKIE_NAME];
-    if (sessionId) {
-      authSessions.delete(sessionId);
-    }
     clearAuthCookie(res);
     res.json({ ok: true });
   });
@@ -460,10 +453,7 @@ function registerRoutes() {
         return res.status(404).json({ error: "Session not found" });
       }
 
-      const runtime = runtimes.get(sessionId);
-      if (runtime?.process) {
-        runtime.process.kill("SIGTERM");
-      }
+      void interruptRuntimeRun(sessionId).catch(() => {});
 
       const session = persistedState.sessions[sessionIndex];
       const hiddenIds = new Set(persistedState.hiddenSessionIds);
@@ -502,13 +492,13 @@ function registerRoutes() {
         return res.status(400).json({ error: "text or attachments are required" });
       }
 
-      if (runtimes.get(sessionId)?.process) {
+      if (isSessionRunning(session)) {
         return res.status(409).json({ error: "Codex is already processing this session" });
       }
 
       const attachments = await persistAttachments(sessionId, attachmentsInput);
       await appendUserMessage(session, text, attachments);
-      runSessionTurn(session, text, attachments);
+      void runSessionTurn(session, text, attachments);
 
       res.json({
         ok: true,
@@ -528,7 +518,7 @@ function registerRoutes() {
         return res.status(404).json({ error: "Session not found" });
       }
 
-      if (runtimes.get(session.id)?.process) {
+      if (isSessionRunning(session)) {
         return res.status(409).json({ error: "Codex is already processing this session" });
       }
 
@@ -539,7 +529,7 @@ function registerRoutes() {
 
       const attachments = Array.isArray(sourceMessage.attachments) ? sourceMessage.attachments : [];
       await appendUserMessage(session, sourceMessage.text || "", attachments);
-      runSessionTurn(session, sourceMessage.text || "", attachments);
+      void runSessionTurn(session, sourceMessage.text || "", attachments);
 
       res.json({
         ok: true,
@@ -559,13 +549,11 @@ function registerRoutes() {
         return res.status(404).json({ error: "Session not found" });
       }
 
-      const runtime = runtimes.get(session.id);
-      if (!runtime?.process) {
+      if (!isSessionRunning(session)) {
         return res.status(409).json({ error: "No running turn for this session" });
       }
 
-      runtime.interruptRequested = true;
-      runtime.process.kill("SIGTERM");
+      await interruptRuntimeRun(session.id);
       res.json({ ok: true });
     } catch (error) {
       console.error("Failed to interrupt session:", error);
@@ -612,7 +600,7 @@ async function handleWebsocketConnection(socket, req) {
 
     socket.on("close", () => {
       runtime.clients.delete(socket);
-      if (!runtime.process && runtime.clients.size === 0) {
+      if (runtime.clients.size === 0) {
         runtimes.delete(sessionId);
       }
     });
@@ -668,22 +656,7 @@ async function appendUserMessage(session, text, attachments = []) {
   });
 }
 
-function runSessionTurn(session, prompt, attachments = []) {
-  if (TEST_MODE) {
-    return runFakeSessionTurn(session, prompt, attachments);
-  }
-
-  const args = buildCodexArgs(session, prompt, attachments);
-  const child = spawn("codex", args, {
-    cwd: session.workspacePath,
-    env: process.env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  const runtime = ensureRuntimeShell(session.id);
-  runtime.process = child;
-  runtime.interruptRequested = false;
-
+async function runSessionTurn(session, prompt, attachments = []) {
   const pendingMessage = {
     id: crypto.randomUUID(),
     role: "assistant",
@@ -695,189 +668,35 @@ function runSessionTurn(session, prompt, attachments = []) {
   session.messages.push(pendingMessage);
   session.status = "running";
   session.updatedAt = new Date().toISOString();
-  void saveState();
-  broadcastToSession(session.id, {
-    type: "message",
-    message: pendingMessage,
-    session: sanitizeSession(session),
-  });
-
-  const lines = readline.createInterface({ input: child.stdout });
-  const errLines = readline.createInterface({ input: child.stderr });
-
-  lines.on("line", (line) => {
-    consumeCodexEvent(session, pendingMessage, line);
-  });
-
-  errLines.on("line", (line) => {
-    runtime.stderr.push(line);
-  });
-
-  child.on("exit", async (code) => {
-    runtime.process = null;
-    const interrupted = Boolean(runtime.interruptRequested);
-    runtime.interruptRequested = false;
-    await finalizeSessionTurn(session, runtime, pendingMessage, { code, interrupted });
-  });
-}
-
-function runFakeSessionTurn(session, prompt, attachments = []) {
-  const runtime = ensureRuntimeShell(session.id);
-  runtime.interruptRequested = false;
-
-  const pendingMessage = {
-    id: crypto.randomUUID(),
-    role: "assistant",
-    text: "",
-    createdAt: new Date().toISOString(),
-    pending: true,
-  };
-
-  session.messages.push(pendingMessage);
-  session.status = "running";
-  session.updatedAt = new Date().toISOString();
-  session.threadId = session.threadId || `test-thread-${session.id}`;
-  void saveState();
-  broadcastToSession(session.id, {
-    type: "message",
-    message: pendingMessage,
-    session: sanitizeSession(session),
-  });
-
-  const delay = prompt.includes("__SLOW__") ? 5000 : 120;
-  const timer = setTimeout(async () => {
-    runtime.process = null;
-    pendingMessage.text = buildFakeAssistantResponse(session, prompt, attachments);
-    await finalizeSessionTurn(session, runtime, pendingMessage, { code: 0, interrupted: false });
-  }, delay);
-
-  runtime.process = {
-    kill() {
-      clearTimeout(timer);
-      if (!runtime.process) {
-        return;
-      }
-      runtime.process = null;
-      runtime.interruptRequested = true;
-      void finalizeSessionTurn(session, runtime, pendingMessage, { code: 0, interrupted: true });
-    },
-  };
-}
-
-function buildFakeAssistantResponse(session, prompt, attachments = []) {
-  if (prompt.includes("__MARKDOWN__")) {
-    return [
-      "# Réponse de test",
-      "",
-      "- item 1",
-      "- item 2",
-      "",
-      "```js",
-      "console.log('ok');",
-      "```",
-    ].join("\n");
-  }
-
-  if (attachments.length) {
-    return `Images reçues: ${attachments.length}`;
-  }
-
-  if (prompt.includes("__LONG__")) {
-    return `Réponse longue pour ${session.name}\n\n${"ligne de test\n".repeat(30).trim()}`;
-  }
-
-  return `Réponse de test: ${prompt}`;
-}
-
-async function finalizeSessionTurn(session, runtime, pendingMessage, { code = 0, interrupted = false }) {
-  if (!pendingMessage.text.trim()) {
-    pendingMessage.text =
-      interrupted
-        ? "Réponse interrompue."
-        : code === 0
-        ? "Réponse vide."
-        : `La session Codex a échoué${runtime.stderr.length ? `: ${runtime.stderr.join(" ")}` : "."}`;
-  }
-
-  pendingMessage.pending = false;
-  session.status = interrupted ? "idle" : code === 0 ? "idle" : "error";
-  session.updatedAt = new Date().toISOString();
-
-  broadcastToSession(session.id, {
-    type: "message.updated",
-    message: pendingMessage,
-    session: sanitizeSession(session),
-  });
-
-  broadcastToSession(session.id, {
-    type: "status",
-    session: sanitizeSession(session),
-  });
-
-  runtime.stderr = [];
   await saveState();
+  broadcastToSession(session.id, {
+    type: "message",
+    message: pendingMessage,
+    session: sanitizeSession(session),
+  });
 
-  if (runtime.clients.size === 0 && !runtime.process) {
-    runtimes.delete(session.id);
-  }
-}
-
-function consumeCodexEvent(session, pendingMessage, line) {
-  let event;
   try {
-    event = JSON.parse(line);
-  } catch {
-    return;
-  }
-
-  if (event.type === "thread.started" && event.thread_id) {
-    session.threadId = event.thread_id;
-    void saveState();
-    return;
-  }
-
-  if (event.type === "item.completed" && event.item?.type === "agent_message") {
-    pendingMessage.text = event.item.text || pendingMessage.text;
-    session.updatedAt = new Date().toISOString();
-    broadcastToSession(session.id, {
-      type: "message.updated",
-      message: pendingMessage,
-      session: sanitizeSession(session),
+    const run = await startRuntimeRun(session, prompt, attachments);
+    if (run?.threadId && session.threadId !== run.threadId) {
+      session.threadId = run.threadId;
+      session.updatedAt = new Date().toISOString();
+      await saveState();
+      broadcastToSession(session.id, {
+        type: "status",
+        session: sanitizeSession(session),
+      });
+    }
+    setTimeout(() => {
+      void syncRuntimeState();
+    }, 60);
+  } catch (error) {
+    await applyRuntimeCompletion(session, pendingMessage, {
+      status: "error",
+      pendingText: "",
+      stderr: [error.message || "Runtime start failed"],
+      code: 1,
     });
   }
-}
-
-function buildCodexArgs(session, prompt, attachments = []) {
-  const imageArgs = attachments.flatMap((attachment) => ["-i", attachment.path]);
-  const prefixArgs = buildCodexPrefixArgs();
-  if (session.threadId) {
-    return [
-      ...prefixArgs,
-      "exec",
-      "resume",
-      "--json",
-      "--skip-git-repo-check",
-      ...imageArgs,
-      session.threadId,
-      prompt,
-    ];
-  }
-
-  return [
-    ...prefixArgs,
-    "exec",
-    "--json",
-    "--skip-git-repo-check",
-    ...imageArgs,
-    "-C",
-    session.workspacePath,
-    prompt,
-  ];
-}
-
-function buildCodexPrefixArgs() {
-  const settings = readCodexConfigSettingsSync();
-  return settings.search ? ["--search"] : [];
 }
 
 async function persistAttachments(sessionId, attachmentsInput) {
@@ -969,7 +788,7 @@ function sanitizeSession(session) {
     workspacePath: session.workspacePath,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
-    status: runtimes.get(session.id)?.process ? "running" : session.status,
+    status: session.status,
     threadId: session.threadId || null,
     messageCount: session.messages.length,
   };
@@ -1003,9 +822,6 @@ function ensureRuntimeShell(sessionId) {
   if (!runtimes.has(sessionId)) {
     runtimes.set(sessionId, {
       clients: new Set(),
-      process: null,
-      stderr: [],
-      interruptRequested: false,
     });
   }
   return runtimes.get(sessionId);
@@ -1019,6 +835,229 @@ function broadcastToSession(sessionId, message) {
       client.send(payload);
     }
   }
+}
+
+function getPendingAssistantMessage(session) {
+  return [...session.messages].reverse().find((message) => message.role === "assistant" && message.pending) || null;
+}
+
+function isSessionRunning(session) {
+  return session?.status === "running" || Boolean(getPendingAssistantMessage(session));
+}
+
+async function ensureRuntimeService() {
+  if (await pingRuntime()) {
+    return;
+  }
+
+  await fsp.rm(RUNTIME_SOCKET_FILE, { force: true }).catch(() => {});
+  const child = spawn(process.execPath, [path.join(ROOT_DIR, "runtime.js")], {
+    cwd: ROOT_DIR,
+    env: {
+      ...process.env,
+      CODEX_MOBILE_RUNTIME_SOCKET: RUNTIME_SOCKET_FILE,
+      CODEX_MOBILE_RUNTIME_STATE_FILE: RUNTIME_STATE_FILE,
+      CODEX_MOBILE_RUNTIME_PID_FILE: RUNTIME_PID_FILE,
+      CODEX_MOBILE_DATA_DIR: DATA_DIR,
+      CODEX_MOBILE_CONFIG_FILE: CODEX_CONFIG_FILE,
+      CODEX_HOME: CODEX_HOME_DIR,
+      CODEX_MOBILE_TEST_MODE: TEST_MODE ? "1" : process.env.CODEX_MOBILE_TEST_MODE || "0",
+    },
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if (await pingRuntime()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  }
+
+  throw new Error("Runtime service unavailable");
+}
+
+async function pingRuntime() {
+  try {
+    const response = await runtimeRequest("GET", "/health");
+    return response.statusCode === 200;
+  } catch {
+    return false;
+  }
+}
+
+async function listRuntimeRuns() {
+  const response = await runtimeRequest("GET", "/runs");
+  if (response.statusCode !== 200) {
+    throw new Error(response.body?.error || "Runtime list failed");
+  }
+  return Array.isArray(response.body?.runs) ? response.body.runs : [];
+}
+
+async function startRuntimeRun(session, prompt, attachments) {
+  const response = await runtimeRequest("POST", "/runs/start", {
+    sessionId: session.id,
+    workspacePath: session.workspacePath,
+    threadId: session.threadId || null,
+    prompt,
+    attachments,
+  });
+  if (response.statusCode !== 200) {
+    throw new Error(response.body?.error || "Runtime start failed");
+  }
+  return response.body?.run || null;
+}
+
+async function interruptRuntimeRun(sessionId) {
+  const response = await runtimeRequest("POST", `/runs/${encodeURIComponent(sessionId)}/interrupt`);
+  if (response.statusCode !== 200) {
+    throw new Error(response.body?.error || "Runtime interrupt failed");
+  }
+}
+
+async function ackRuntimeRun(sessionId) {
+  await runtimeRequest("POST", `/runs/${encodeURIComponent(sessionId)}/ack`);
+}
+
+async function runtimeRequest(method, requestPath, payload) {
+  const body = payload == null ? null : Buffer.from(JSON.stringify(payload));
+  return await new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        socketPath: RUNTIME_SOCKET_FILE,
+        path: requestPath,
+        method,
+        headers: body
+          ? {
+              "Content-Type": "application/json",
+              "Content-Length": String(body.length),
+            }
+          : undefined,
+      },
+      (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf8");
+          let parsed = null;
+          try {
+            parsed = text ? JSON.parse(text) : null;
+          } catch {}
+          resolve({ statusCode: response.statusCode || 500, body: parsed });
+        });
+      }
+    );
+
+    request.on("error", reject);
+    if (body) {
+      request.write(body);
+    }
+    request.end();
+  });
+}
+
+async function syncRuntimeState({ boot = false } = {}) {
+  if (runtimeSyncInFlight) {
+    return;
+  }
+  runtimeSyncInFlight = true;
+  try {
+    const runs = await listRuntimeRuns();
+    const runMap = new Map(runs.map((run) => [run.sessionId, run]));
+    let changed = false;
+
+    for (const session of persistedState.sessions) {
+      const pendingMessage = getPendingAssistantMessage(session);
+      const run = runMap.get(session.id);
+
+      if (run) {
+        if (run.threadId && session.threadId !== run.threadId) {
+          session.threadId = run.threadId;
+          session.updatedAt = new Date().toISOString();
+          changed = true;
+        }
+
+        if (run.status === "running") {
+          if (session.status !== "running") {
+            session.status = "running";
+            session.updatedAt = new Date().toISOString();
+            changed = true;
+            broadcastToSession(session.id, {
+              type: "status",
+              session: sanitizeSession(session),
+            });
+          }
+
+          if (pendingMessage && run.pendingText && pendingMessage.text !== run.pendingText) {
+            pendingMessage.text = run.pendingText;
+            session.updatedAt = new Date().toISOString();
+            changed = true;
+            broadcastToSession(session.id, {
+              type: "message.updated",
+              message: pendingMessage,
+              session: sanitizeSession(session),
+            });
+          }
+          continue;
+        }
+
+        if (pendingMessage) {
+          await applyRuntimeCompletion(session, pendingMessage, run);
+          changed = true;
+        }
+
+        await ackRuntimeRun(session.id).catch(() => {});
+        continue;
+      }
+
+      if (boot && pendingMessage && session.status === "running") {
+        pendingMessage.pending = false;
+        pendingMessage.text = pendingMessage.text?.trim() || "Réponse interrompue après rechargement du serveur.";
+        session.status = "interrupted";
+        session.updatedAt = new Date().toISOString();
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      await saveState();
+    }
+  } catch (error) {
+    console.error("Runtime sync failed:", error);
+  } finally {
+    runtimeSyncInFlight = false;
+  }
+}
+
+async function applyRuntimeCompletion(session, pendingMessage, run) {
+  if (!pendingMessage.text.trim()) {
+    pendingMessage.text =
+      String(run.pendingText || "").trim() ||
+      (run.status === "interrupted"
+        ? "Réponse interrompue."
+        : run.code === 0 || run.status === "completed"
+        ? "Réponse vide."
+        : `La session Codex a échoué${Array.isArray(run.stderr) && run.stderr.length ? `: ${run.stderr.join(" ")}` : "."}`);
+  } else if (String(run.pendingText || "").trim()) {
+    pendingMessage.text = run.pendingText;
+  }
+
+  pendingMessage.pending = false;
+  session.status = run.status === "completed" || run.status === "interrupted" ? "idle" : "error";
+  session.updatedAt = new Date().toISOString();
+
+  broadcastToSession(session.id, {
+    type: "message.updated",
+    message: pendingMessage,
+    session: sanitizeSession(session),
+  });
+
+  broadcastToSession(session.id, {
+    type: "status",
+    session: sanitizeSession(session),
+  });
 }
 
 function loadEnvFile(envFile) {
@@ -1226,8 +1265,10 @@ function parseCookies(cookieHeader) {
 
 function createAuthSession() {
   const sessionId = crypto.randomUUID();
-  authSessions.set(sessionId, Date.now() + AUTH_SESSION_TTL_SECONDS * 1000);
-  return sessionId;
+  const expiresAt = Date.now() + AUTH_SESSION_TTL_SECONDS * 1000;
+  const payload = `${sessionId}.${expiresAt}`;
+  const signature = signAuthPayload(payload);
+  return `${payload}.${signature}`;
 }
 
 function setAuthCookie(res, sessionId) {
@@ -1258,30 +1299,42 @@ function isAuthenticatedRequest(req) {
     return true;
   }
 
-  cleanupExpiredAuthSessions();
   const cookies = parseCookies(req.headers.cookie || "");
-  const sessionId = cookies[AUTH_COOKIE_NAME];
-  if (!sessionId) {
+  const token = cookies[AUTH_COOKIE_NAME];
+  if (!token) {
     return false;
   }
-
-  const expiresAt = authSessions.get(sessionId);
-  if (!expiresAt || expiresAt <= Date.now()) {
-    authSessions.delete(sessionId);
-    return false;
-  }
-
-  authSessions.set(sessionId, Date.now() + AUTH_SESSION_TTL_SECONDS * 1000);
-  return true;
+  return verifyAuthSession(token);
 }
 
-function cleanupExpiredAuthSessions() {
-  const now = Date.now();
-  for (const [sessionId, expiresAt] of authSessions.entries()) {
-    if (expiresAt <= now) {
-      authSessions.delete(sessionId);
-    }
+function signAuthPayload(payload) {
+  return crypto.createHmac("sha256", AUTH_TOKEN).update(payload).digest("hex");
+}
+
+function verifyAuthSession(token) {
+  const parts = String(token || "").split(".");
+  if (parts.length !== 3) {
+    return false;
   }
+
+  const [sessionId, expiresAtRaw, signature] = parts;
+  if (!sessionId || !expiresAtRaw || !signature) {
+    return false;
+  }
+
+  const expiresAt = Number(expiresAtRaw);
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    return false;
+  }
+
+  const payload = `${sessionId}.${expiresAtRaw}`;
+  const expected = signAuthPayload(payload);
+  const candidateBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (candidateBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(candidateBuffer, expectedBuffer);
 }
 
 async function readCodexConfigSettings() {

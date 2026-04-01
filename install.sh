@@ -8,6 +8,7 @@ DEFAULT_WORKSPACE_ROOT="${DEFAULT_WORKSPACE_ROOT:-/projects}"
 CODEX_MOBILE_INSTALL_ENV_DIR="${CODEX_MOBILE_INSTALL_ENV_DIR:-/etc/codex-mobile}"
 CODEX_MOBILE_INSTALL_ENV_FILE="${CODEX_MOBILE_INSTALL_ENV_FILE:-${CODEX_MOBILE_INSTALL_ENV_DIR}/.env}"
 SERVICE_INSTALL="${SERVICE_INSTALL:-yes}"
+SERVICE_INSTALLED="no"
 AUTH_TOKEN_VALUE=""
 NODE_BIN=""
 NPM_BIN=""
@@ -245,7 +246,7 @@ install_service_if_requested() {
     return
   fi
 
-  if prompt_yes_no "Installer aussi le service systemd codex-mobile ?" "y"; then
+  if prompt_yes_no "Installer aussi les services systemd codex-mobile et codex-mobile-runtime ?" "y"; then
     (
       cd "${APP_DIR}"
       run_root chmod +x ./service.sh
@@ -256,6 +257,7 @@ install_service_if_requested() {
         RUN_HOME="${INSTALL_HOME}" \
         ./service.sh
     )
+    SERVICE_INSTALLED="yes"
   fi
 }
 
@@ -297,9 +299,14 @@ main() {
   echo "Env: ${CODEX_MOBILE_INSTALL_ENV_FILE}"
   echo "IP: $(detect_server_ip)"
   echo "Token d'acces: $(read_auth_token)"
+  if [[ "${SERVICE_INSTALLED}" == "yes" ]]; then
+    echo "Services: codex-mobile + codex-mobile-runtime"
+  else
+    echo "Services: non installes"
+  fi
   echo "========================================"
   echo "Tu peux retrouver le token dans ${CODEX_MOBILE_INSTALL_ENV_FILE}"
-  if [[ "${SERVICE_INSTALL}" != "yes" ]]; then
+  if [[ "${SERVICE_INSTALLED}" != "yes" ]]; then
     echo "Lancement manuel: cd ${APP_DIR} && npm start"
   fi
 }

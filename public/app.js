@@ -95,6 +95,7 @@ const state = {
 };
 
 let settingsSavePromise = Promise.resolve();
+let serverHealthPollTimer = 0;
 
 const elements = {
   authGate: document.getElementById("authGate"),
@@ -102,6 +103,7 @@ const elements = {
   authTokenInput: document.getElementById("authTokenInput"),
   authHint: document.getElementById("authHint"),
   authSubmitButton: document.getElementById("authSubmitButton"),
+  serverHealthIndicator: document.getElementById("serverHealthIndicator"),
   openModelModal: document.getElementById("openModelModal"),
   activeModelLabel: document.getElementById("activeModelLabel"),
   logoutButton: document.getElementById("logoutButton"),
@@ -241,6 +243,7 @@ bootstrap();
 async function bootstrap() {
   bindEvents();
   applyTheme(state.settings.theme);
+  startServerHealthPolling();
   if (!(await ensureAuthenticated())) {
     return;
   }
@@ -442,6 +445,33 @@ function openAuthGate(message = "Saisis le token d'accès pour ouvrir l'interfac
   window.setTimeout(() => {
     elements.authTokenInput.focus();
   }, 0);
+}
+
+function startServerHealthPolling() {
+  void refreshServerHealth();
+  if (serverHealthPollTimer) {
+    window.clearInterval(serverHealthPollTimer);
+  }
+  serverHealthPollTimer = window.setInterval(() => {
+    void refreshServerHealth();
+  }, 3000);
+}
+
+async function refreshServerHealth() {
+  try {
+    const response = await fetch("/api/health", { credentials: "same-origin" });
+    const payload = response.ok ? await response.json() : null;
+    updateServerHealthIndicator(Boolean(response.ok && payload?.ok && payload?.runtimeOk));
+  } catch {
+    updateServerHealthIndicator(false);
+  }
+}
+
+function updateServerHealthIndicator(isHealthy) {
+  elements.serverHealthIndicator.classList.toggle("ok", isHealthy);
+  elements.serverHealthIndicator.classList.toggle("down", !isHealthy);
+  elements.serverHealthIndicator.setAttribute("title", isHealthy ? "Serveur disponible" : "Serveur indisponible");
+  elements.serverHealthIndicator.setAttribute("aria-label", isHealthy ? "Serveur disponible" : "Serveur indisponible");
 }
 
 function closeAuthGate() {
@@ -824,11 +854,16 @@ async function onCreateSession(event) {
 async function onSendMessage(event) {
   event.preventDefault();
   const text = elements.messageInput.value.trim();
+  const hasDraft = Boolean(text) || state.pendingAttachments.length > 0;
   if (!state.activeSessionId) {
     notify("warning", "Selectionne d'abord une session.");
     return;
   }
   if (isActiveSessionRunning()) {
+    if (hasDraft) {
+      notify("info", "Attends la fin du tour avant d'envoyer un nouveau message.");
+      return;
+    }
     const response = await apiFetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/interrupt`, {
       method: "POST",
     });
@@ -843,7 +878,7 @@ async function onSendMessage(event) {
     notify("success", "Reponse interrompue.");
     return;
   }
-  if (!text && state.pendingAttachments.length === 0) {
+  if (!hasDraft) {
     return;
   }
 

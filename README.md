@@ -20,7 +20,7 @@ Le script :
 - génère un token `CODEX_MOBILE_AUTH_TOKEN`
 - garde une place pour `GITHUB_TOKEN`
 - lance `codex login` si Codex n'est pas déjà connecté
-- peut installer et démarrer le service systemd
+- peut installer et démarrer les services systemd `codex-mobile` et `codex-mobile-runtime`
 
 ## Après installation
 
@@ -30,6 +30,8 @@ Si tu n'as pas choisi l'installation du service systemd :
 cd /projects/codex-mobile
 npm start
 ```
+
+En lancement manuel, `server.js` démarre aussi le runtime local si besoin.
 
 L'application écoute par défaut sur :
 
@@ -53,10 +55,10 @@ sudo ./service.sh
 ```
 
 Le script :
-- installe le service `codex-mobile`
-- le démarre immédiatement
-- l'active au démarrage du serveur
-- le redémarre automatiquement en cas de crash ou de reboot
+- installe les services `codex-mobile` et `codex-mobile-runtime`
+- démarre les deux immédiatement
+- active les deux au démarrage du serveur
+- redémarre automatiquement les deux en cas de crash ou de reboot
 
 ## Installation manuelle
 
@@ -83,4 +85,5 @@ npm start
 - L'API et le WebSocket sont protégés par session cookie quand `CODEX_MOBILE_AUTH_TOKEN` est présent.
 - La liste des modèles affichée dans l'interface est rafraîchie en live via Codex quand la configuration est chargée.
 - Les sessions et l'état local sont persistés côté serveur.
+- En mode service, l'exécution des tours Codex est portée par `codex-mobile-runtime`, séparé du serveur web `codex-mobile`.
 - Codex CLI doit être installé et connecté sur la machine pour que les sessions Codex fonctionnent.
