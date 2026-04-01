@@ -109,6 +109,51 @@ test("auth et configuration app", async () => {
     assert.match(envText, /^GITHUB_TOKEN=ghp_updated_test_token$/m);
     assert.match(envText, /^CODEX_MOBILE_AUTH_TOKEN=test-auth-token$/m);
 
+    response = await fetch(`${BASE_URL}/api/sessions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ workspace: "api-suite", prompt: "" }),
+    });
+    assert.equal(response.status, 201);
+    const created = await response.json();
+    assert.equal(created.session.workspaceName, "api-suite");
+
+    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/message`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ text: "bonjour", attachments: [] }),
+    });
+    assert.equal(response.status, 200);
+    const sent = await response.json();
+    assert.equal(sent.session.id, created.session.id);
+    assert.equal(Array.isArray(sent.messages), true);
+    assert.equal(sent.messages.length, 2);
+    assert.equal(sent.messages[0].role, "user");
+    assert.equal(sent.messages[0].text, "bonjour");
+    assert.equal(sent.messages[1].role, "assistant");
+    assert.equal(sent.messages[1].pending, true);
+
+    await delay(300);
+
+    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/retry`, {
+      method: "POST",
+      headers: { cookie },
+    });
+    assert.equal(response.status, 200);
+    const retried = await response.json();
+    assert.equal(Array.isArray(retried.messages), true);
+    assert.equal(retried.messages.length, 4);
+    assert.equal(retried.messages[2].role, "user");
+    assert.equal(retried.messages[2].text, "bonjour");
+    assert.equal(retried.messages[3].role, "assistant");
+    assert.equal(retried.messages[3].pending, true);
+
     response = await fetch(`${BASE_URL}/api/auth/logout`, {
       method: "POST",
       headers: { cookie },

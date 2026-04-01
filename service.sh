@@ -3,9 +3,9 @@ set -euo pipefail
 
 SERVICE_NAME="${SERVICE_NAME:-codex-mobile}"
 APP_DIR="${APP_DIR:-/projects/codex-mobile}"
-RUN_USER="${RUN_USER:-${SUDO_USER:-root}}"
-RUN_GROUP="${RUN_GROUP:-$(id -gn "${RUN_USER}" 2>/dev/null || echo root)}"
-RUN_HOME="${RUN_HOME:-$(getent passwd "${RUN_USER}" | cut -d: -f6)}"
+RUN_USER="${RUN_USER:-}"
+RUN_GROUP="${RUN_GROUP:-}"
+RUN_HOME="${RUN_HOME:-}"
 PORT="${PORT:-4180}"
 SERVICE_QUIET="${SERVICE_QUIET:-0}"
 NODE_BIN="${NODE_BIN:-$(command -v node)}"
@@ -35,6 +35,25 @@ fi
 
 if [[ ! -f "${APP_DIR}/server.js" ]]; then
   echo "server.js introuvable dans ${APP_DIR}" >&2
+  exit 1
+fi
+
+if [[ -z "${RUN_USER}" ]]; then
+  RUN_USER="$(stat -c '%U' "${APP_DIR}" 2>/dev/null || true)"
+  RUN_USER="${RUN_USER:-${SUDO_USER:-root}}"
+fi
+
+if [[ -z "${RUN_GROUP}" ]]; then
+  RUN_GROUP="$(id -gn "${RUN_USER}" 2>/dev/null || true)"
+  RUN_GROUP="${RUN_GROUP:-root}"
+fi
+
+if [[ -z "${RUN_HOME}" ]]; then
+  RUN_HOME="$(getent passwd "${RUN_USER}" | cut -d: -f6)"
+fi
+
+if [[ -z "${RUN_HOME}" ]]; then
+  echo "Home introuvable pour ${RUN_USER}." >&2
   exit 1
 fi
 
