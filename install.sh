@@ -91,8 +91,12 @@ install_codex_if_needed() {
 }
 
 ensure_repo() {
-  run_root mkdir -p "$(dirname "${APP_DIR}")"
-  run_root chown "${INSTALL_USER}:${INSTALL_GROUP}" "$(dirname "${APP_DIR}")"
+  local app_parent
+  app_parent="$(dirname "${APP_DIR}")"
+  if ! run_root test -d "${app_parent}"; then
+    run_root mkdir -p "${app_parent}"
+    run_root chown "${INSTALL_USER}:${INSTALL_GROUP}" "${app_parent}"
+  fi
 
   if [[ -d "${APP_DIR}/.git" ]]; then
     run_owner git -C "${APP_DIR}" fetch --all --prune
@@ -131,27 +135,64 @@ generate_token() {
   openssl rand -hex 32
 }
 
+upsert_env_line() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local temp_file
+  temp_file="$(mktemp)"
+
+  if run_root test -f "${file}"; then
+    run_root awk -v key="${key}" -v value="${value}" '
+      BEGIN { replaced = 0 }
+      index($0, key "=") == 1 {
+        if (!replaced) {
+          print key "=" value
+          replaced = 1
+        }
+        next
+      }
+      { print }
+      END {
+        if (!replaced) {
+          print key "=" value
+        }
+      }
+    ' "${file}" > "${temp_file}"
+  else
+    printf '%s=%s\n' "${key}" "${value}" > "${temp_file}"
+  fi
+
+  run_root install -m 600 -o "${INSTALL_USER}" -g "${INSTALL_GROUP}" "${temp_file}" "${file}"
+  rm -f "${temp_file}"
+}
+
 write_env_file() {
   run_root mkdir -p "${CODEX_MOBILE_INSTALL_ENV_DIR}"
   run_root chown "${INSTALL_USER}:${INSTALL_GROUP}" "${CODEX_MOBILE_INSTALL_ENV_DIR}"
-  local auth_token existing_github
-  auth_token="$(generate_token)"
+  local auth_token existing_auth existing_github
+  existing_auth=""
+  auth_token=""
   AUTH_TOKEN_VALUE="${auth_token}"
   existing_github=""
 
   if run_root test -f "${CODEX_MOBILE_INSTALL_ENV_FILE}"; then
+    existing_auth="$(
+      run_root bash -lc "sed -n 's/^CODEX_MOBILE_AUTH_TOKEN=//p' '${CODEX_MOBILE_INSTALL_ENV_FILE}' | head -n 1"
+    )"
     existing_github="$(
       run_root bash -lc "sed -n 's/^GITHUB_TOKEN=//p' '${CODEX_MOBILE_INSTALL_ENV_FILE}' | head -n 1"
     )"
   fi
 
+  auth_token="${existing_auth:-$(generate_token)}"
+  AUTH_TOKEN_VALUE="${auth_token}"
+
   run_root touch "${CODEX_MOBILE_INSTALL_ENV_FILE}"
   run_root chown "${INSTALL_USER}:${INSTALL_GROUP}" "${CODEX_MOBILE_INSTALL_ENV_FILE}"
   run_root chmod 600 "${CODEX_MOBILE_INSTALL_ENV_FILE}"
-  run_root bash -lc "cat > '${CODEX_MOBILE_INSTALL_ENV_FILE}' <<'EOF'
-CODEX_MOBILE_AUTH_TOKEN=${auth_token}
-GITHUB_TOKEN=${existing_github}
-EOF"
+  upsert_env_line "${CODEX_MOBILE_INSTALL_ENV_FILE}" "CODEX_MOBILE_AUTH_TOKEN" "${auth_token}"
+  upsert_env_line "${CODEX_MOBILE_INSTALL_ENV_FILE}" "GITHUB_TOKEN" "${existing_github}"
 }
 
 initialize_database() {

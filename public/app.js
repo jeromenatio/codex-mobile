@@ -107,6 +107,7 @@ const elements = {
   logoutButton: document.getElementById("logoutButton"),
   scrollTopButton: document.getElementById("scrollTopButton"),
   scrollBottomButton: document.getElementById("scrollBottomButton"),
+  scrollDock: document.getElementById("scrollDock"),
   toggleMenuDrawer: document.getElementById("toggleMenuDrawer"),
   menuDrawer: document.getElementById("menuDrawer"),
   closeMenuDrawer: document.getElementById("closeMenuDrawer"),
@@ -366,6 +367,7 @@ function bindEvents() {
   elements.pickImagesButton.addEventListener("click", openImageModal);
   elements.clearComposerButton.addEventListener("click", clearComposer);
   elements.imageInput.addEventListener("change", onPickImages);
+  elements.messages.addEventListener("scroll", updateScrollDockVisibility);
   elements.messageInput.addEventListener("input", autoResizeMessageInput);
   elements.messageInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -875,6 +877,7 @@ async function onSendMessage(event) {
 function renderMessages(shouldScroll = false) {
   if (!state.messages.length) {
     elements.messages.innerHTML = `<div class="empty-chat">Démarre une session puis écris à Codex.</div>`;
+    updateScrollDockVisibility();
     return;
   }
 
@@ -929,10 +932,13 @@ function renderMessages(shouldScroll = false) {
 
   if (shouldScroll) {
     if (Date.now() < state.manualScrollLockUntil) {
+      updateScrollDockVisibility();
       return;
     }
     elements.messages.scrollTop = elements.messages.scrollHeight;
   }
+
+  updateScrollDockVisibility();
 }
 
 function enhanceCodeBlocks() {
@@ -1983,11 +1989,13 @@ async function applyModelChange(slug) {
 function scrollConversationTop() {
   state.manualScrollLockUntil = Date.now() + 1200;
   enforceConversationScroll(0);
+  updateScrollDockVisibility();
 }
 
 function scrollConversationBottom() {
   state.manualScrollLockUntil = 0;
   enforceConversationScroll(elements.messages.scrollHeight);
+  updateScrollDockVisibility();
 }
 
 function enforceConversationScroll(top) {
@@ -1999,6 +2007,16 @@ function enforceConversationScroll(top) {
   window.setTimeout(() => {
     elements.messages.scrollTop = top;
   }, 0);
+}
+
+function hasConversation() {
+  return state.messages.length > 0;
+}
+
+function updateScrollDockVisibility() {
+  const shouldShow = hasConversation() && elements.messages.scrollHeight - elements.messages.clientHeight > 24;
+  elements.scrollDock.classList.toggle("visible", shouldShow);
+  elements.scrollDock.setAttribute("aria-hidden", shouldShow ? "false" : "true");
 }
 
 async function onRenameSession(event) {

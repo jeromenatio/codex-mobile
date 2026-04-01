@@ -1264,6 +1264,30 @@ textarea {
   min-width: 0;
 }
 
+.scroll-dock {
+  position: absolute;
+  right: 6px;
+  bottom: 12px;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.scroll-dock.visible {
+  display: flex;
+}
+
+.scroll-dock-button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+}
+
 .empty-chat {
   margin: auto 0;
   color: var(--ink-soft);

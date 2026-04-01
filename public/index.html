@@ -35,12 +35,6 @@
           </button>
         </div>
         <div class="topbar-actions">
-          <button id="scrollTopButton" class="icon-button plain-button" type="button" aria-label="Aller en haut de la conversation">
-            <i class="bi bi-arrow-up icon-glyph" aria-hidden="true"></i>
-          </button>
-          <button id="scrollBottomButton" class="icon-button plain-button" type="button" aria-label="Aller en bas de la conversation">
-            <i class="bi bi-arrow-down icon-glyph" aria-hidden="true"></i>
-          </button>
           <button id="toggleSidebar" class="icon-button plain-button" type="button" aria-label="Ouvrir les sessions">
             <i class="bi bi-chat-left-text-fill icon-glyph" aria-hidden="true"></i>
           </button>
@@ -141,6 +135,14 @@
 
       <main class="chat-shell">
         <section id="messages" class="messages"></section>
+        <div id="scrollDock" class="scroll-dock" aria-hidden="true">
+          <button id="scrollTopButton" class="icon-button plain-button scroll-dock-button" type="button" aria-label="Aller en haut de la conversation">
+            <i class="bi bi-arrow-up icon-glyph" aria-hidden="true"></i>
+          </button>
+          <button id="scrollBottomButton" class="icon-button plain-button scroll-dock-button" type="button" aria-label="Aller en bas de la conversation">
+            <i class="bi bi-arrow-down icon-glyph" aria-hidden="true"></i>
+          </button>
+        </div>
       </main>
 
       <section class="composer-wrap">
