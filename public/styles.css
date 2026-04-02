@@ -2308,18 +2308,48 @@ textarea {
   padding: 10px;
 }
 
-.image-name {
+.attachment-copy {
   min-width: 0;
   flex: 1 1 auto;
+  display: grid;
+  gap: 3px;
+}
+
+.image-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.82rem;
+  color: var(--ink);
+}
+
+.attachment-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.74rem;
   color: var(--ink-soft);
 }
 
 .image-remove-button {
   flex: 0 0 auto;
+}
+
+.file-preview {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel-soft) 90%, transparent), color-mix(in srgb, var(--button-bg) 82%, transparent));
+  color: var(--accent-dark);
+  border-bottom: 1px solid var(--line);
+}
+
+.file-preview i {
+  font-size: 2rem;
 }
 
 .image-empty {

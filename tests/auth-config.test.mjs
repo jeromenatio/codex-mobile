@@ -265,6 +265,46 @@ test("auth et configuration app", async () => {
     }
     assert.equal(firstTurnComplete, true);
 
+    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/message`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({
+        text: "avec fichier",
+        attachments: [
+          {
+            name: "notes.txt",
+            mimeType: "text/plain",
+            dataUrl: `data:text/plain;base64,${Buffer.from("bonjour fichier", "utf8").toString("base64")}`,
+          },
+        ],
+      }),
+    });
+    assert.equal(response.status, 200);
+    const withFile = await response.json();
+    assert.equal(withFile.messages.at(-2).text, "avec fichier");
+    assert.equal(withFile.messages.at(-2).attachments.length, 1);
+    const storedAttachment = withFile.messages.at(-2).attachments[0];
+    assert.match(storedAttachment.path, new RegExp(`\\.codex-mobile/uploads/${created.session.id}`));
+    assert.match(storedAttachment.relativePath, /^\.codex-mobile\/uploads\//);
+    assert.equal(fs.existsSync(storedAttachment.path), true);
+
+    let attachmentTurnComplete = false;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/export`, {
+        headers: { cookie },
+      });
+      const snapshot = await response.json();
+      if (!snapshot.session.messages.at(-1)?.pending) {
+        attachmentTurnComplete = true;
+        break;
+      }
+      await delay(150);
+    }
+    assert.equal(attachmentTurnComplete, true);
+
     response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/retry`, {
       method: "POST",
       headers: { cookie },
@@ -272,11 +312,12 @@ test("auth et configuration app", async () => {
     assert.equal(response.status, 200);
     const retried = await response.json();
     assert.equal(Array.isArray(retried.messages), true);
-    assert.equal(retried.messages.length, 4);
-    assert.equal(retried.messages[2].role, "user");
-    assert.equal(retried.messages[2].text, "bonjour");
-    assert.equal(retried.messages[3].role, "assistant");
-    assert.equal(retried.messages[3].pending, true);
+    assert.equal(retried.messages.length, 6);
+    assert.equal(retried.messages[4].role, "user");
+    assert.equal(retried.messages[4].text, "avec fichier");
+    assert.equal(retried.messages[4].attachments.length, 1);
+    assert.equal(retried.messages[5].role, "assistant");
+    assert.equal(retried.messages[5].pending, true);
 
     response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/export`, {
       headers: { cookie },
@@ -287,7 +328,7 @@ test("auth et configuration app", async () => {
     assert.equal(exported.session.id, created.session.id);
     assert.equal(exported.session.workspaceName, "api-suite");
     assert.equal(Array.isArray(exported.session.messages), true);
-    assert.equal(exported.session.messages.length, 4);
+    assert.equal(exported.session.messages.length, 6);
     assert.equal(exported.session.messages[0].text, "bonjour");
 
     let retryTurnComplete = false;

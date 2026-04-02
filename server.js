@@ -25,7 +25,6 @@ const DISABLE_EXTERNAL_SYNC = TEST_MODE || process.env.CODEX_MOBILE_DISABLE_EXTE
 const DATA_DIR = process.env.CODEX_MOBILE_DATA_DIR || path.join(ROOT_DIR, "data");
 const STATE_FILE = process.env.CODEX_MOBILE_STATE_FILE || path.join(DATA_DIR, "state.json");
 const DB_FILE = process.env.CODEX_MOBILE_DB_FILE || path.join(DATA_DIR, "codex-mobile.sqlite");
-const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
 const RUNTIME_SOCKET_FILE = process.env.CODEX_MOBILE_RUNTIME_SOCKET || path.join(DATA_DIR, "runtime.sock");
 const RUNTIME_STATE_FILE = process.env.CODEX_MOBILE_RUNTIME_STATE_FILE || path.join(DATA_DIR, "runtime-state.json");
 const RUNTIME_PID_FILE = process.env.CODEX_MOBILE_RUNTIME_PID_FILE || path.join(DATA_DIR, "runtime.pid");
@@ -69,7 +68,6 @@ boot().catch((error) => {
 
 async function boot() {
   await fsp.mkdir(DATA_DIR, { recursive: true });
-  await fsp.mkdir(UPLOADS_DIR, { recursive: true });
 
   persistedState.sessions = Array.isArray(persistedState.sessions) ? persistedState.sessions : [];
   persistedState.lastSessionId = persistedState.lastSessionId || null;
@@ -496,7 +494,7 @@ function registerRoutes() {
         return res.status(409).json({ error: "Codex is already processing this session" });
       }
 
-      const attachments = await persistAttachments(sessionId, attachmentsInput);
+      const attachments = await persistAttachments(session, attachmentsInput);
       await appendUserMessage(session, text, attachments);
       void runSessionTurn(session, text, attachments);
 
@@ -699,36 +697,55 @@ async function runSessionTurn(session, prompt, attachments = []) {
   }
 }
 
-async function persistAttachments(sessionId, attachmentsInput) {
+async function persistAttachments(session, attachmentsInput) {
   const persisted = [];
 
   for (const attachment of attachmentsInput) {
-    const name = String(attachment?.name || "image").trim() || "image";
+    const name = String(attachment?.name || "attachment").trim() || "attachment";
     const dataUrl = String(attachment?.dataUrl || "");
+    const declaredMimeType = String(attachment?.mimeType || "").trim();
 
-    const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+    const match = dataUrl.match(/^data:([a-zA-Z0-9.+/-]+);base64,(.+)$/);
     if (!match) {
       continue;
     }
 
     const [, mimeType, base64] = match;
-    const extension = mimeType.split("/")[1]?.replace(/[^a-zA-Z0-9]/g, "") || "png";
-    const dir = path.join(UPLOADS_DIR, sessionId);
+    const normalizedMimeType = declaredMimeType || mimeType || "application/octet-stream";
+    const extension = resolveAttachmentExtension(name, normalizedMimeType);
+    const dir = getSessionUploadsDir(session);
     await fsp.mkdir(dir, { recursive: true });
 
     const filename = `${Date.now()}-${crypto.randomUUID()}.${extension}`;
     const filePath = path.join(dir, filename);
     await fsp.writeFile(filePath, Buffer.from(base64, "base64"));
+    const relativePath = path.relative(session.workspacePath, filePath) || filename;
 
     persisted.push({
       id: crypto.randomUUID(),
       name,
-      mimeType,
+      mimeType: normalizedMimeType,
       path: filePath,
+      relativePath,
+      isImage: normalizedMimeType.startsWith("image/"),
     });
   }
 
   return persisted;
+}
+
+function getSessionUploadsDir(session) {
+  return path.join(session.workspacePath, ".codex-mobile", "uploads", session.id);
+}
+
+function resolveAttachmentExtension(name, mimeType) {
+  const extFromName = path.extname(name || "").replace(/^\./, "").trim();
+  if (extFromName) {
+    return extFromName.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase() || "bin";
+  }
+
+  const extFromMime = mimeType.split("/")[1]?.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
+  return extFromMime || "bin";
 }
 
 async function ensureWorkspace(label) {

@@ -1854,30 +1854,44 @@ function onSavePrompt(event) {
 
 function renderImageManager() {
   if (state.imagePickerBusy) {
-    elements.imageManagerList.innerHTML = `<div class="image-empty image-loading">Ajout des images...</div>`;
+    elements.imageManagerList.innerHTML = `<div class="image-empty image-loading">Ajout des pièces jointes...</div>`;
     return;
   }
 
   if (!state.pendingAttachments.length) {
     elements.imageManagerList.innerHTML = `
       <div class="empty-state-panel compact image-empty">
-        <i class="bi bi-image" aria-hidden="true"></i>
-        <p class="empty-state">Aucune image attachée.</p>
-        <small>Ajoute une ou plusieurs images pour le prochain message.</small>
+        <i class="bi bi-paperclip" aria-hidden="true"></i>
+        <p class="empty-state">Aucune pièce jointe.</p>
+        <small>Ajoute une ou plusieurs pièces jointes pour le prochain message.</small>
       </div>
     `;
     return;
   }
 
   elements.imageManagerList.innerHTML = state.pendingAttachments
-    .map((image) => {
-      const safeName = escapeHtml(image.name || "image");
+    .map((attachment) => {
+      const safeName = escapeHtml(attachment.name || "attachment");
+      const subtitle = attachment.isImage
+        ? "Image"
+        : escapeHtml(formatAttachmentType(attachment.mimeType));
       return `
-        <article class="image-card" data-image-id="${escapeHtml(image.id)}">
-          <img class="image-preview" src="${escapeHtml(image.dataUrl)}" alt="${safeName}" />
+        <article class="image-card" data-image-id="${escapeHtml(attachment.id)}">
+          ${
+            attachment.isImage
+              ? `<img class="image-preview" src="${escapeHtml(attachment.dataUrl)}" alt="${safeName}" />`
+              : `
+                <div class="file-preview" aria-hidden="true">
+                  <i class="bi ${escapeHtml(pickAttachmentIcon(attachment.mimeType, attachment.name))}"></i>
+                </div>
+              `
+          }
           <div class="image-card-footer">
-            <span class="image-name" title="${safeName}">${safeName}</span>
-            <button class="icon-button plain-button image-remove-button" type="button" data-remove-image="${escapeHtml(image.id)}" aria-label="Retirer ${safeName}">
+            <div class="attachment-copy">
+              <span class="image-name" title="${safeName}">${safeName}</span>
+              <span class="attachment-meta">${subtitle}</span>
+            </div>
+            <button class="icon-button plain-button image-remove-button" type="button" data-remove-image="${escapeHtml(attachment.id)}" aria-label="Retirer ${safeName}">
               <i class="bi bi-trash3-fill icon-glyph" aria-hidden="true"></i>
             </button>
           </div>
@@ -2306,10 +2320,13 @@ async function onPickImages(event) {
 
   const images = [];
   for (const file of files) {
+    const dataUrl = await readFileAsDataUrl(file);
     images.push({
       id: generateId(),
       name: file.name,
-      dataUrl: await readFileAsDataUrl(file),
+      mimeType: file.type || "application/octet-stream",
+      dataUrl,
+      isImage: String(file.type || "").startsWith("image/"),
     });
   }
 
@@ -2318,7 +2335,7 @@ async function onPickImages(event) {
   elements.imageInput.value = "";
   renderImageManager();
   renderComposerStatus(state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null);
-  notify("success", `${images.length} image${images.length > 1 ? "s" : ""} ajoutée${images.length > 1 ? "s" : ""}.`);
+  notify("success", `${images.length} pièce${images.length > 1 ? "s" : ""} jointe${images.length > 1 ? "s" : ""} ajoutée${images.length > 1 ? "s" : ""}.`);
 }
 
 async function retryLastUserMessage() {
@@ -2400,7 +2417,43 @@ function buildComposerStatus(session, running = Boolean(session) && isActiveSess
   if (!state.pendingAttachments.length) {
     return base;
   }
-  return `${base} · ${state.pendingAttachments.length} image${state.pendingAttachments.length > 1 ? "s" : ""}`;
+  return `${base} · ${state.pendingAttachments.length} pièce${state.pendingAttachments.length > 1 ? "s" : ""}`;
+}
+
+function formatAttachmentType(mimeType) {
+  if (!mimeType) {
+    return "Fichier";
+  }
+  if (mimeType.startsWith("image/")) {
+    return "Image";
+  }
+  if (mimeType === "application/pdf") {
+    return "PDF";
+  }
+  if (mimeType.startsWith("text/")) {
+    return "Texte";
+  }
+  if (mimeType.includes("zip")) {
+    return "Archive";
+  }
+  return "Fichier";
+}
+
+function pickAttachmentIcon(mimeType, name = "") {
+  const lowerName = String(name).toLowerCase();
+  if (String(mimeType || "").startsWith("image/")) {
+    return "bi-image-fill";
+  }
+  if (mimeType === "application/pdf" || lowerName.endsWith(".pdf")) {
+    return "bi-filetype-pdf";
+  }
+  if (mimeType.startsWith("text/") || /\.(md|txt|json|yaml|yml|xml|csv|log)$/i.test(lowerName)) {
+    return "bi-file-earmark-text-fill";
+  }
+  if (/\.(zip|tar|gz|tgz|rar|7z)$/i.test(lowerName) || String(mimeType || "").includes("zip")) {
+    return "bi-file-earmark-zip-fill";
+  }
+  return "bi-file-earmark-fill";
 }
 
 function renderComposerStatus(session, running = Boolean(session) && isActiveSessionRunning()) {

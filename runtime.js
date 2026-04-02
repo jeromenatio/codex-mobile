@@ -242,7 +242,7 @@ function buildFakeAssistantResponse(prompt, attachments = []) {
   }
 
   if (attachments.length) {
-    return `Images reçues: ${attachments.length}`;
+    return `Pièces jointes reçues: ${attachments.length}`;
   }
 
   if (prompt.includes("__LONG__")) {
@@ -253,7 +253,10 @@ function buildFakeAssistantResponse(prompt, attachments = []) {
 }
 
 function buildCodexArgs(run) {
-  const imageArgs = run.attachments.flatMap((attachment) => ["-i", attachment.path]);
+  const imageArgs = run.attachments
+    .filter((attachment) => attachment?.isImage)
+    .flatMap((attachment) => ["-i", attachment.path]);
+  const promptWithAttachments = buildPromptWithAttachments(run.prompt, run.attachments);
   const prefixArgs = buildCodexPrefixArgs();
 
   if (run.threadId) {
@@ -265,7 +268,7 @@ function buildCodexArgs(run) {
       "--skip-git-repo-check",
       ...imageArgs,
       run.threadId,
-      run.prompt,
+      promptWithAttachments,
     ];
   }
 
@@ -277,8 +280,22 @@ function buildCodexArgs(run) {
     ...imageArgs,
     "-C",
     run.workspacePath,
-    run.prompt,
+    promptWithAttachments,
   ];
+}
+
+function buildPromptWithAttachments(prompt, attachments = []) {
+  if (!attachments.length) {
+    return prompt;
+  }
+
+  const lines = attachments.map((attachment) => `- ${attachment.relativePath || attachment.path}`);
+  return [
+    prompt,
+    "",
+    "Pièces jointes disponibles dans le workspace :",
+    ...lines,
+  ].join("\n").trim();
 }
 
 function buildCodexPrefixArgs() {

@@ -293,27 +293,28 @@ test("suite e2e exhaustive hors voix", async (t) => {
     await context.close();
     });
 
-    await t.test("gestionnaire d images et envoi avec pieces jointes", async () => {
+    await t.test("gestionnaire de pieces jointes et envoi avec images/fichiers", async () => {
       const { page, context } = await newPage();
     await activateSessionFromDrawer(page, "alpha-suite");
 
     await page.setInputFiles("#imageInput", [
       pngPayload("one.png"),
       pngPayload("two.png"),
+      textPayload("notes.txt", "bonjour piece jointe"),
     ]);
     await clickDom(page, "#pickImagesButton");
-    assert.equal(await page.locator(".image-card").count(), 2);
+    assert.equal(await page.locator(".image-card").count(), 3);
     await clickDom(page.locator("[data-remove-image]").first());
-    assert.equal(await page.locator(".image-card").count(), 1);
+    assert.equal(await page.locator(".image-card").count(), 2);
     await clickDom(page, "#doneImageModalButton");
-    await page.fill("#messageInput", "avec image");
+    await page.fill("#messageInput", "avec pieces jointes");
     await clickDom(page, "#sendButton");
-    await expectText(page.locator(".bubble.assistant").last(), "Images reçues: 1");
+    await expectText(page.locator(".bubble.assistant").last(), "Pièces jointes reçues: 2");
 
     await page.setInputFiles("#imageInput", [pngPayload("clear.png")]);
     await clickDom(page, "#clearComposerButton");
     await clickDom(page, "#pickImagesButton");
-    await expectText(page.locator("#imageManagerList"), "Aucune image attachée.");
+    await expectText(page.locator("#imageManagerList"), "Aucune pièce jointe.");
     await clickDom(page, "#doneImageModalButton");
 
     await context.close();
@@ -505,7 +506,7 @@ async function openMenu(page) {
 
 async function activateSessionFromDrawer(page, name) {
   await openSidebar(page);
-  await clickDom(page.locator(".session-item").filter({ hasText: name }).locator("[data-action='open']"));
+  await clickDom(page.locator(".session-item").filter({ hasText: name }).first());
   await expectText(page.locator("#activeSessionName"), name);
 }
 
@@ -598,5 +599,13 @@ function pngPayload(name) {
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WnHCq4AAAAASUVORK5CYII=",
       "base64"
     ),
+  };
+}
+
+function textPayload(name, text) {
+  return {
+    name,
+    mimeType: "text/plain",
+    buffer: Buffer.from(text, "utf8"),
   };
 }
