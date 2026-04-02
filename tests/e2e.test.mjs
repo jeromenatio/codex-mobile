@@ -322,6 +322,16 @@ test("suite e2e exhaustive hors voix", async (t) => {
     await clickDom(page, "#pickImagesButton");
     await expectText(page.locator("#imageManagerList"), "Aucune pièce jointe.");
     await clickDom(page, "#doneImageModalButton");
+    await waitFor(async () => {
+      const bootstrap = await (await fetch(`${BASE_URL}/api/bootstrap`)).json();
+      const activeSession = bootstrap.sessions.find((session) => session.workspaceName === "alpha-suite");
+      assert.ok(activeSession?.id, "session alpha-suite introuvable");
+      const draftsDir = path.join(WORKSPACE_ROOT, "alpha-suite", ".codex-mobile", "uploads", activeSession.id, ".drafts");
+      if (!fs.existsSync(draftsDir)) {
+        return;
+      }
+      assert.deepEqual(fs.readdirSync(draftsDir), []);
+    }, 5000);
 
     await context.close();
     });

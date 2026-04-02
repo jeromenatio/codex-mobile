@@ -2461,7 +2461,8 @@ async function retryLastUserMessage() {
 }
 
 function clearComposer() {
-  resetComposerState();
+  elements.messageInput.value = "";
+  autoResizeMessageInput();
   void clearPendingImages();
 }
 
@@ -2478,6 +2479,9 @@ function resetComposerState() {
 async function clearPendingImages() {
   state.imagePickerBusy = false;
   const attachments = [...state.pendingAttachments];
+  for (const attachment of attachments) {
+    attachment.removed = true;
+  }
   state.pendingAttachments = [];
   elements.imageInput.value = "";
   await Promise.all(attachments.map((attachment) => deleteDraftAttachment(attachment)));
@@ -2489,6 +2493,7 @@ async function removePendingImage(imageId) {
   const target = state.pendingAttachments.find((image) => image.id === imageId);
   state.pendingAttachments = state.pendingAttachments.filter((image) => image.id !== imageId);
   if (target) {
+    target.removed = true;
     await deleteDraftAttachment(target);
   }
   renderImageManager();
@@ -2546,6 +2551,9 @@ async function uploadDraftAttachment(attachment) {
   attachment.draftId = payload.attachment?.draftId || attachment.id;
   attachment.path = payload.attachment?.path || "";
   attachment.relativePath = payload.attachment?.relativePath || "";
+  if (attachment.removed || !state.pendingAttachments.some((item) => item.id === attachment.id)) {
+    await deleteDraftAttachment(attachment);
+  }
 }
 
 async function deleteDraftAttachment(attachment) {
