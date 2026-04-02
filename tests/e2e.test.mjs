@@ -335,6 +335,7 @@ test("suite e2e exhaustive hors voix", async (t) => {
 
       await openMenu(page);
       await clickDom(page, "#menuConfigButton");
+      await expectValue(page.locator("#workspaceRootInput"), ALT_WORKSPACE_ROOT);
       await page.fill("#workspaceRootInput", WORKSPACE_ROOT);
       await page.locator("#configForm").evaluate((form) => {
         form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
