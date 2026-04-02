@@ -44,9 +44,6 @@
           </button>
         </div>
         <div class="topbar-actions">
-          <div id="serverHealthIndicator" class="server-health-indicator" aria-label="État du serveur" title="Serveur indisponible">
-            <i class="bi bi-hdd-rack-fill" aria-hidden="true"></i>
-          </div>
           <button id="toggleSidebar" class="icon-button plain-button" type="button" aria-label="Ouvrir les sessions">
             <i class="bi bi-chat-left-text-fill icon-glyph" aria-hidden="true"></i>
           </button>
@@ -164,6 +161,9 @@
         <form id="messageForm" class="composer">
           <textarea id="messageInput" rows="1" placeholder="Écrire à Codex"></textarea>
           <div class="composer-footer">
+            <div id="serverHealthIndicator" class="server-health-indicator composer-health-indicator" aria-label="État du serveur" title="Serveur indisponible">
+              <i class="bi bi-server" aria-hidden="true"></i>
+            </div>
             <div class="composer-actions">
               <input id="imageInput" type="file" multiple hidden />
               <button id="openPromptModal" class="plain-button icon-button action-button" type="button" aria-label="Prompts rapides">

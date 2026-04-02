@@ -110,6 +110,7 @@ const elements = {
   scrollTopButton: document.getElementById("scrollTopButton"),
   scrollBottomButton: document.getElementById("scrollBottomButton"),
   scrollDock: document.getElementById("scrollDock"),
+  composerWrap: document.querySelector(".composer-wrap"),
   toggleMenuDrawer: document.getElementById("toggleMenuDrawer"),
   menuDrawer: document.getElementById("menuDrawer"),
   closeMenuDrawer: document.getElementById("closeMenuDrawer"),
@@ -1178,7 +1179,19 @@ function autoResizeMessageInput() {
   const nextHeight = Math.min(input.scrollHeight, 132);
   input.style.height = `${Math.max(48, nextHeight)}px`;
   input.style.overflowY = input.scrollHeight > 132 ? "auto" : "hidden";
-  document.documentElement.style.setProperty("--composer-h", `${Math.max(112, nextHeight + 70)}px`);
+  syncComposerHeight();
+}
+
+function syncComposerHeight() {
+  const updateHeight = () => {
+    const measured = Math.max(112, Math.ceil(elements.composerWrap?.offsetHeight || 112));
+    document.documentElement.style.setProperty("--composer-h", `${measured}px`);
+  };
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(updateHeight);
+    return;
+  }
+  updateHeight();
 }
 
 function openCreateModal() {
@@ -2848,3 +2861,4 @@ function clampDuration(value) {
 }
 
 autoResizeMessageInput();
+window.addEventListener("resize", syncComposerHeight);
