@@ -253,9 +253,8 @@ function buildFakeAssistantResponse(prompt, attachments = []) {
 }
 
 function buildCodexArgs(run) {
-  const imageArgs = run.attachments
-    .filter((attachment) => attachment?.isImage)
-    .flatMap((attachment) => ["-i", attachment.path]);
+  const imageArgs = collectImageAttachmentPaths(run.attachments)
+    .flatMap((imagePath) => ["-i", imagePath]);
   const promptWithAttachments = buildPromptWithAttachments(run.prompt, run.attachments);
   const prefixArgs = buildCodexPrefixArgs();
 
@@ -290,12 +289,63 @@ function buildPromptWithAttachments(prompt, attachments = []) {
   }
 
   const lines = attachments.map((attachment) => `- ${attachment.relativePath || attachment.path}`);
+  const extractedSections = attachments
+    .flatMap((attachment) => buildAttachmentContextSections(attachment))
+    .filter(Boolean);
+
   return [
     prompt,
     "",
     "Pièces jointes disponibles dans le workspace :",
     ...lines,
+    ...extractedSections,
   ].join("\n").trim();
+}
+
+function collectImageAttachmentPaths(attachments = []) {
+  const paths = [];
+  for (const attachment of attachments) {
+    if (attachment?.isImage && attachment?.path) {
+      paths.push(attachment.path);
+    }
+    for (const derived of Array.isArray(attachment?.extractedImages) ? attachment.extractedImages : []) {
+      if (derived?.path) {
+        paths.push(derived.path);
+      }
+    }
+  }
+  return paths;
+}
+
+function buildAttachmentContextSections(attachment) {
+  const sections = [];
+  const derivedImages = Array.isArray(attachment?.extractedImages) ? attachment.extractedImages : [];
+  if (derivedImages.length) {
+    sections.push(
+      "",
+      `Images extraites depuis ${attachment.name || attachment.relativePath || attachment.path} :`,
+      ...derivedImages.map((image) => `- ${image.relativePath || image.path}`)
+    );
+  }
+
+  const extractedText = String(attachment?.extractedText || "").trim();
+  if (extractedText) {
+    sections.push(
+      "",
+      `Texte extrait de ${attachment.name || attachment.relativePath || attachment.path} :`,
+      truncateAttachmentText(extractedText)
+    );
+  }
+
+  return sections;
+}
+
+function truncateAttachmentText(text) {
+  const normalized = String(text || "").trim();
+  if (normalized.length <= 6000) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 6000).trim()}\n\n[texte tronqué]`;
 }
 
 function buildCodexPrefixArgs() {

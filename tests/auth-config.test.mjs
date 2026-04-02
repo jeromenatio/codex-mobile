@@ -329,6 +329,59 @@ test("auth et configuration app", async () => {
     }
     assert.equal(attachmentTurnComplete, true);
 
+    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/attachments`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({
+        id: "draft-pdf",
+        name: "bonjour.pdf",
+        mimeType: "application/pdf",
+        dataUrl: pdfDataUrl("Bonjour PDF"),
+      }),
+    });
+    assert.equal(response.status, 201);
+    const uploadedPdf = await response.json();
+
+    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/message`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({
+        text: "avec pdf",
+        attachments: [
+          {
+            draftId: uploadedPdf.attachment.draftId,
+          },
+        ],
+      }),
+    });
+    assert.equal(response.status, 200);
+    const withPdf = await response.json();
+    const storedPdf = withPdf.messages.at(-2).attachments[0];
+    assert.equal(storedPdf.mimeType, "application/pdf");
+    assert.match(storedPdf.extractedText || "", /Bonjour PDF/);
+    assert.equal(Boolean(storedPdf.extractedTextPath), true);
+    assert.equal(fs.existsSync(path.join(created.session.workspacePath, storedPdf.extractedTextPath)), true);
+
+    let pdfTurnComplete = false;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/export`, {
+        headers: { cookie },
+      });
+      const snapshot = await response.json();
+      if (!snapshot.session.messages.at(-1)?.pending) {
+        pdfTurnComplete = true;
+        break;
+      }
+      await delay(150);
+    }
+    assert.equal(pdfTurnComplete, true);
+
     response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/retry`, {
       method: "POST",
       headers: { cookie },
@@ -336,12 +389,12 @@ test("auth et configuration app", async () => {
     assert.equal(response.status, 200);
     const retried = await response.json();
     assert.equal(Array.isArray(retried.messages), true);
-    assert.equal(retried.messages.length, 6);
-    assert.equal(retried.messages[4].role, "user");
-    assert.equal(retried.messages[4].text, "avec fichier");
-    assert.equal(retried.messages[4].attachments.length, 1);
-    assert.equal(retried.messages[5].role, "assistant");
-    assert.equal(retried.messages[5].pending, true);
+    assert.equal(retried.messages.length, 8);
+    assert.equal(retried.messages.at(-2).role, "user");
+    assert.equal(retried.messages.at(-2).text, "avec pdf");
+    assert.equal(retried.messages.at(-2).attachments.length, 1);
+    assert.equal(retried.messages.at(-1).role, "assistant");
+    assert.equal(retried.messages.at(-1).pending, true);
 
     response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/export`, {
       headers: { cookie },
@@ -352,7 +405,7 @@ test("auth et configuration app", async () => {
     assert.equal(exported.session.id, created.session.id);
     assert.equal(exported.session.workspaceName, "api-suite");
     assert.equal(Array.isArray(exported.session.messages), true);
-    assert.equal(exported.session.messages.length, 6);
+    assert.equal(exported.session.messages.length, 8);
     assert.equal(exported.session.messages[0].text, "bonjour");
 
     let retryTurnComplete = false;
@@ -516,4 +569,39 @@ async function waitForServer() {
       throw new Error("Server start timeout");
     })(),
   ]);
+}
+
+function pdfDataUrl(text) {
+  return `data:application/pdf;base64,${buildMinimalPdfBuffer(text).toString("base64")}`;
+}
+
+function buildMinimalPdfBuffer(text) {
+  const escapedText = String(text || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)");
+  const stream = `BT\n/F1 18 Tf\n72 140 Td\n(${escapedText}) Tj\nET`;
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+    `<< /Length ${Buffer.byteLength(stream, "utf8")} >>\nstream\n${stream}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  for (let index = 0; index < objects.length; index += 1) {
+    offsets.push(Buffer.byteLength(pdf, "utf8"));
+    pdf += `${index + 1} 0 obj\n${objects[index]}\nendobj\n`;
+  }
+
+  const xrefOffset = Buffer.byteLength(pdf, "utf8");
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += "0000000000 65535 f \n";
+  for (let index = 1; index < offsets.length; index += 1) {
+    pdf += `${String(offsets[index]).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return Buffer.from(pdf, "utf8");
 }

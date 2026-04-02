@@ -39,6 +39,10 @@ const AUTH_ENABLED = (FORCE_AUTH || !TEST_MODE) && Boolean(AUTH_TOKEN);
 const AUTH_COOKIE_NAME = "codex_mobile_auth";
 const AUTH_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 const RESERVED_SECRET_KEYS = new Set(["CODEX_MOBILE_AUTH_TOKEN"]);
+const PDF_IMAGE_PAGE_LIMIT = 5;
+
+let pdfjsModulePromise = null;
+const pdftoppmAvailable = commandExists("pdftoppm");
 
 const app = express();
 const server = http.createServer(app);
@@ -865,7 +869,7 @@ async function finalizeDraftAttachment(session, draftId) {
   await fsp.rename(sourcePath, targetPath);
   await fsp.rm(path.join(dir, `${draftId}.json`), { force: true });
 
-  return {
+  const attachment = {
     id: draftId,
     draftId,
     name: String(metadata?.name || targetFilename),
@@ -874,6 +878,8 @@ async function finalizeDraftAttachment(session, draftId) {
     relativePath: path.relative(session.workspacePath, targetPath) || targetFilename,
     isImage: String(metadata?.mimeType || "").startsWith("image/"),
   };
+
+  return enrichStoredAttachment(session, attachment);
 }
 
 async function deleteDraftAttachment(session, draftId) {
@@ -892,6 +898,152 @@ async function deleteDraftAttachment(session, draftId) {
 
 async function clearDraftAttachments(session) {
   await fsp.rm(getSessionDraftsDir(session), { recursive: true, force: true });
+}
+
+async function enrichStoredAttachment(session, attachment) {
+  if (!isPdfAttachment(attachment)) {
+    return attachment;
+  }
+
+  return enrichPdfAttachment(session, attachment);
+}
+
+function isPdfAttachment(attachment) {
+  const mimeType = String(attachment?.mimeType || "").toLowerCase();
+  const name = String(attachment?.name || "").toLowerCase();
+  return mimeType === "application/pdf" || name.endsWith(".pdf");
+}
+
+async function enrichPdfAttachment(session, attachment) {
+  const enriched = {
+    ...attachment,
+    pageCount: 0,
+    extractedText: "",
+    extractedTextPath: "",
+    extractedImages: [],
+    extractionError: "",
+  };
+
+  try {
+    const pdfData = new Uint8Array(await fsp.readFile(attachment.path));
+    const pdfjs = await loadPdfjs();
+    const loadingTask = pdfjs.getDocument({
+      data: pdfData,
+      disableWorker: true,
+      isEvalSupported: false,
+      useSystemFonts: true,
+    });
+    const pdf = await loadingTask.promise;
+
+    enriched.pageCount = Number(pdf.numPages) || 0;
+    const pageTexts = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items
+        .map((item) => String(item?.str || "").trim())
+        .filter(Boolean)
+        .join(" ");
+      if (pageText) {
+        pageTexts.push(`Page ${pageNumber}\n${pageText}`);
+      }
+    }
+
+    const extractedText = pageTexts.join("\n\n").trim();
+    if (extractedText) {
+      const extractedTextPath = await writePdfExtractedText(session, attachment, extractedText);
+      enriched.extractedText = extractedText;
+      enriched.extractedTextPath = path.relative(session.workspacePath, extractedTextPath) || extractedTextPath;
+    }
+
+    if (pdftoppmAvailable) {
+      enriched.extractedImages = await renderPdfPageImages(session, attachment, Math.min(pdf.numPages, PDF_IMAGE_PAGE_LIMIT));
+    }
+
+    try {
+      await loadingTask.destroy();
+    } catch {}
+  } catch (error) {
+    enriched.extractionError = error.message || "PDF extraction failed";
+  }
+
+  return enriched;
+}
+
+async function writePdfExtractedText(session, attachment, text) {
+  const parsed = path.parse(attachment.path);
+  const outputPath = path.join(parsed.dir, `${parsed.name}.extracted.txt`);
+  await fsp.writeFile(outputPath, text, "utf8");
+  return outputPath;
+}
+
+async function renderPdfPageImages(session, attachment, pageLimit) {
+  if (!pageLimit || !pdftoppmAvailable) {
+    return [];
+  }
+
+  const parsed = path.parse(attachment.path);
+  const outputDir = path.join(parsed.dir, `${parsed.name}.pages`);
+  await fsp.mkdir(outputDir, { recursive: true });
+  const outputPrefix = path.join(outputDir, "page");
+
+  await runCommand("pdftoppm", [
+    "-png",
+    "-f",
+    "1",
+    "-l",
+    String(pageLimit),
+    attachment.path,
+    outputPrefix,
+  ]);
+
+  const files = (await fsp.readdir(outputDir))
+    .filter((name) => /^page-\d+\.png$/i.test(name))
+    .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+
+  return files.map((filename, index) => {
+    const filePath = path.join(outputDir, filename);
+    return {
+      name: filename,
+      mimeType: "image/png",
+      path: filePath,
+      relativePath: path.relative(session.workspacePath, filePath) || filePath,
+      isImage: true,
+      page: index + 1,
+    };
+  });
+}
+
+async function loadPdfjs() {
+  if (!pdfjsModulePromise) {
+    pdfjsModulePromise = import("pdfjs-dist/legacy/build/pdf.mjs");
+  }
+  return pdfjsModulePromise;
+}
+
+function commandExists(name) {
+  const result = spawnSync("bash", ["-lc", `command -v ${JSON.stringify(name)} >/dev/null 2>&1`], {
+    stdio: "ignore",
+  });
+  return result.status === 0;
+}
+
+function runCommand(command, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(stderr.trim() || `${command} exited with code ${code}`));
+    });
+  });
 }
 
 function resolveAttachmentExtension(name, mimeType) {

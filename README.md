@@ -66,7 +66,7 @@ Si tu préfères faire l'installation étape par étape :
 
 ```bash
 sudo apt update
-sudo apt install -y git curl ca-certificates gnupg openssl
+sudo apt install -y git curl ca-certificates gnupg openssl poppler-utils
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt install -y nodejs
 sudo npm install -g @openai/codex
