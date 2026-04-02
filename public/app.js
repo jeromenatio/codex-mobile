@@ -641,6 +641,7 @@ function renderSessionList() {
               title="${escapeHtml(session.name)}"
             >
               <span class="session-name">${escapeHtml(session.name)}</span>
+              <span class="session-subtitle">Mise à jour ${escapeHtml(formatDate(session.updatedAt || session.createdAt))}</span>
             </button>
             <div class="session-actions">
               <button class="session-action icon-button plain-button" type="button" data-action="rename" data-session-id="${session.id}" aria-label="Renommer ${escapeHtml(session.name)}">
@@ -1020,6 +1021,10 @@ function renderMessageAttachments(message) {
 
   return `
     <div class="bubble-attachments">
+      <div class="bubble-attachments-label">
+        <i class="bi bi-paperclip" aria-hidden="true"></i>
+        <span>${attachments.length} pièce${attachments.length > 1 ? "s" : ""} jointe${attachments.length > 1 ? "s" : ""}</span>
+      </div>
       ${attachments
         .map((attachment) => renderMessageAttachmentCard(message.id, attachment))
         .join("")}
