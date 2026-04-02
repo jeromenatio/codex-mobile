@@ -111,6 +111,7 @@ const elements = {
   scrollBottomButton: document.getElementById("scrollBottomButton"),
   scrollDock: document.getElementById("scrollDock"),
   composerWrap: document.querySelector(".composer-wrap"),
+  composerStatusRow: document.querySelector(".composer-status-row"),
   toggleMenuDrawer: document.getElementById("toggleMenuDrawer"),
   menuDrawer: document.getElementById("menuDrawer"),
   closeMenuDrawer: document.getElementById("closeMenuDrawer"),
@@ -1184,7 +1185,17 @@ function autoResizeMessageInput() {
 
 function syncComposerHeight() {
   const updateHeight = () => {
-    const measured = Math.max(112, Math.ceil(elements.composerWrap?.offsetHeight || 112));
+    const wrap = elements.composerWrap;
+    if (!wrap) {
+      document.documentElement.style.setProperty("--composer-h", "112px");
+      return;
+    }
+    const computed = globalThis.getComputedStyle ? getComputedStyle(wrap) : null;
+    const paddingTop = Number.parseFloat(computed?.paddingTop || "0") || 0;
+    const paddingBottom = Number.parseFloat(computed?.paddingBottom || "0") || 0;
+    const statusHeight = Math.ceil(elements.composerStatusRow?.offsetHeight || 0);
+    const formHeight = Math.ceil(elements.messageForm?.scrollHeight || 0);
+    const measured = Math.max(112, Math.ceil(paddingTop + paddingBottom + statusHeight + formHeight));
     document.documentElement.style.setProperty("--composer-h", `${measured}px`);
   };
   if (typeof requestAnimationFrame === "function") {
