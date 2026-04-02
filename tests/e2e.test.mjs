@@ -9,7 +9,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "playwright";
 
 const TMP_ROOT = await fsp.mkdtemp(path.join(os.tmpdir(), "codex-mobile-e2e-"));
-const PORT = 4191;
+const PORT = 4100 + Math.floor(Math.random() * 500);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const DATA_DIR = path.join(TMP_ROOT, "data");
 const WORKSPACE_ROOT = path.join(TMP_ROOT, "workspaces-a");
@@ -291,6 +291,71 @@ test("suite e2e exhaustive hors voix", async (t) => {
     }, 5000);
 
     await context.close();
+    });
+
+    await t.test("cycle complet de changement de root avec revalidation des flux", async () => {
+      const { page, context } = await newPage();
+      await activateSessionFromDrawer(page, "alpha-suite");
+
+      await sendMessage(page, "root-a-baseline");
+      await expectText(page.locator(".bubble.assistant").last(), "Réponse de test");
+
+      await openMenu(page);
+      await clickDom(page, "#menuConfigButton");
+      await page.fill("#workspaceRootInput", ALT_WORKSPACE_ROOT);
+      await page.locator("#configForm").evaluate((form) => {
+        form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      });
+      await waitFor(async () => {
+        const config = await (await fetch(`${BASE_URL}/api/config/app`)).json();
+        assert.equal(config.workspaceRoot, ALT_WORKSPACE_ROOT);
+      });
+
+      await openSidebar(page);
+      await expectText(page.locator("#sessionList"), "Aucune session.");
+
+      await openMenu(page);
+      await clickDom(page, "#menuNewSessionButton");
+      await page.fill("#workspaceInput", "alt-suite");
+      await page.fill("#promptInput", "");
+      await clickDom(page, "#createSessionForm .primary-button");
+      await expectText(page.locator("#activeSessionName"), "alt-suite");
+
+      await sendMessage(page, "message-root-b");
+      await expectText(page.locator(".bubble.assistant").last(), "Réponse de test");
+
+      await clickDom(page, "#openPromptModal");
+      await expectText(page.locator("#promptList"), "Commit & push");
+      await clickDom(page, "#closePromptFooterButton");
+
+      await openMenu(page);
+      await clickDom(page, "#menuSecretsButton");
+      await expectText(page.locator("#secretsList"), "CODEX_MOBILE_AUTH_TOKEN");
+      await clickDom(page, "#doneSecretsModalButton");
+
+      await openMenu(page);
+      await clickDom(page, "#menuConfigButton");
+      await page.fill("#workspaceRootInput", WORKSPACE_ROOT);
+      await page.locator("#configForm").evaluate((form) => {
+        form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      });
+      await waitFor(async () => {
+        const config = await (await fetch(`${BASE_URL}/api/config/app`)).json();
+        assert.equal(config.workspaceRoot, WORKSPACE_ROOT);
+      });
+
+      await openSidebar(page);
+      await expectText(page.locator("#sessionList"), "alpha-suite");
+      await waitFor(async () => {
+        assert.equal((await page.locator("#sessionList").innerText()).includes("alt-suite"), false);
+      });
+
+      await clickDom(page.locator(".session-item").filter({ hasText: "alpha-suite" }).first());
+      await expectText(page.locator("#activeSessionName"), "alpha-suite");
+      await sendMessage(page, "root-a-return");
+      await expectText(page.locator(".bubble.assistant").last(), "Réponse de test");
+
+      await context.close();
     });
 
     await t.test("gestionnaire de pieces jointes et envoi avec images/fichiers", async () => {

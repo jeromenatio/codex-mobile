@@ -9,7 +9,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import AdmZip from "adm-zip";
 
 const TMP_ROOT = await fsp.mkdtemp(path.join(os.tmpdir(), "codex-mobile-auth-"));
-const PORT = 4192;
+const PORT = 4600 + Math.floor(Math.random() * 500);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const DATA_DIR = path.join(TMP_ROOT, "data");
 const WORKSPACE_ROOT = path.join(TMP_ROOT, "workspaces");
@@ -78,6 +78,41 @@ test("auth et configuration app", async () => {
     const updatedConfig = await response.json();
     assert.equal(updatedConfig.workspaceRoot, nextRoot);
     assert.equal(fs.existsSync(nextRoot), true);
+
+    response = await fetch(`${BASE_URL}/api/sessions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ workspace: "alt-root-suite", prompt: "" }),
+    });
+    assert.equal(response.status, 201);
+    const altRootSession = await response.json();
+    assert.equal(altRootSession.session.workspaceName, "alt-root-suite");
+
+    response = await fetch(`${BASE_URL}/api/bootstrap`, {
+      headers: { cookie },
+    });
+    let bootstrap = await response.json();
+    assert.equal(bootstrap.sessions.some((item) => item.workspaceName === "alt-root-suite"), true);
+    assert.equal(bootstrap.sessions.some((item) => item.workspaceName === "api-suite"), false);
+
+    response = await fetch(`${BASE_URL}/api/config/app`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ workspaceRoot: WORKSPACE_ROOT }),
+    });
+    assert.equal(response.status, 200);
+
+    response = await fetch(`${BASE_URL}/api/bootstrap`, {
+      headers: { cookie },
+    });
+    bootstrap = await response.json();
+    assert.equal(bootstrap.sessions.some((item) => item.workspaceName === "alt-root-suite"), false);
 
     response = await fetch(`${BASE_URL}/api/ui-state`, {
       method: "PUT",
