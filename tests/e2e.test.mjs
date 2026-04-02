@@ -303,9 +303,12 @@ test("suite e2e exhaustive hors voix", async (t) => {
       textPayload("notes.txt", "bonjour piece jointe"),
     ]);
     await clickDom(page, "#pickImagesButton");
+    await expectText(page.locator("#imageManagerList"), "Prêt");
     assert.equal(await page.locator(".image-card").count(), 3);
     await clickDom(page.locator("[data-remove-image]").first());
-    assert.equal(await page.locator(".image-card").count(), 2);
+    await waitFor(async () => {
+      assert.equal(await page.locator(".image-card").count(), 2);
+    }, 5000);
     await clickDom(page, "#doneImageModalButton");
     await page.fill("#messageInput", "avec pieces jointes");
     await clickDom(page, "#sendButton");

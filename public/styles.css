@@ -2333,6 +2333,22 @@ textarea {
   color: var(--ink-soft);
 }
 
+.attachment-upload-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+}
+
+.attachment-upload-state.ok {
+  color: var(--badge-live-text);
+}
+
+.attachment-upload-state.error {
+  color: #b23a2d;
+}
+
 .image-remove-button {
   flex: 0 0 auto;
 }

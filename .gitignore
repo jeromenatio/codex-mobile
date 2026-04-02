@@ -1,6 +1,7 @@
 node_modules/
 data/
 workspaces/
+.codex-mobile/
 mobile-check.png
 npm-debug.log*
 *.sqlite

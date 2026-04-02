@@ -894,9 +894,16 @@ async function onSendMessage(event) {
   if (!hasDraft) {
     return;
   }
+  if (state.pendingAttachments.some((attachment) => attachment.uploading)) {
+    notify("info", "Attends la fin de l'upload des pièces jointes.");
+    return;
+  }
+  if (state.pendingAttachments.some((attachment) => attachment.uploadError)) {
+    notify("warning", "Supprime les pièces jointes en erreur avant d'envoyer.");
+    return;
+  }
 
   const attachments = [...state.pendingAttachments];
-  clearComposer();
 
   const response = await apiFetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/message`, {
     method: "POST",
@@ -914,6 +921,7 @@ async function onSendMessage(event) {
   }
 
   const payload = await response.json();
+  resetComposerState();
   if (state.activeSessionId === payload.session?.id) {
     state.messages = Array.isArray(payload.messages) ? payload.messages : state.messages;
     upsertSessionSummary(payload.session);
@@ -1875,6 +1883,11 @@ function renderImageManager() {
       const subtitle = attachment.isImage
         ? "Image"
         : escapeHtml(formatAttachmentType(attachment.mimeType));
+      const uploadState = attachment.uploadError
+        ? '<span class="attachment-upload-state error">Échec upload</span>'
+        : attachment.uploading
+        ? '<span class="attachment-upload-state">Upload…</span>'
+        : '<span class="attachment-upload-state ok">Prêt</span>';
       return `
         <article class="image-card" data-image-id="${escapeHtml(attachment.id)}">
           ${
@@ -1890,6 +1903,7 @@ function renderImageManager() {
             <div class="attachment-copy">
               <span class="image-name" title="${safeName}">${safeName}</span>
               <span class="attachment-meta">${subtitle}</span>
+              ${uploadState}
             </div>
             <button class="icon-button plain-button image-remove-button" type="button" data-remove-image="${escapeHtml(attachment.id)}" aria-label="Retirer ${safeName}">
               <i class="bi bi-trash3-fill icon-glyph" aria-hidden="true"></i>
@@ -2315,6 +2329,12 @@ async function onPickImages(event) {
     return;
   }
 
+  if (!state.activeSessionId) {
+    elements.imageInput.value = "";
+    notify("warning", "Selectionne d'abord une session.");
+    return;
+  }
+
   state.imagePickerBusy = true;
   renderImageManager();
 
@@ -2327,6 +2347,8 @@ async function onPickImages(event) {
       mimeType: file.type || "application/octet-stream",
       dataUrl,
       isImage: String(file.type || "").startsWith("image/"),
+      uploading: true,
+      uploadError: false,
     });
   }
 
@@ -2335,7 +2357,17 @@ async function onPickImages(event) {
   elements.imageInput.value = "";
   renderImageManager();
   renderComposerStatus(state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null);
-  notify("success", `${images.length} pièce${images.length > 1 ? "s" : ""} jointe${images.length > 1 ? "s" : ""} ajoutée${images.length > 1 ? "s" : ""}.`);
+
+  await Promise.all(images.map((attachment) => uploadDraftAttachment(attachment)));
+  renderImageManager();
+  renderComposerStatus(state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null);
+  const successCount = images.filter((attachment) => !attachment.uploadError).length;
+  if (successCount) {
+    notify("success", `${successCount} pièce${successCount > 1 ? "s" : ""} jointe${successCount > 1 ? "s" : ""} prête${successCount > 1 ? "s" : ""}.`);
+  }
+  if (images.some((attachment) => attachment.uploadError)) {
+    notify("warning", "Certaines pièces jointes n'ont pas pu être envoyées.");
+  }
 }
 
 async function retryLastUserMessage() {
@@ -2378,6 +2410,11 @@ async function retryLastUserMessage() {
 }
 
 function clearComposer() {
+  resetComposerState();
+  void clearPendingImages();
+}
+
+function resetComposerState() {
   elements.messageInput.value = "";
   elements.imageInput.value = "";
   state.imagePickerBusy = false;
@@ -2387,16 +2424,22 @@ function clearComposer() {
   renderComposerStatus(state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null);
 }
 
-function clearPendingImages() {
+async function clearPendingImages() {
   state.imagePickerBusy = false;
+  const attachments = [...state.pendingAttachments];
   state.pendingAttachments = [];
   elements.imageInput.value = "";
+  await Promise.all(attachments.map((attachment) => deleteDraftAttachment(attachment)));
   renderImageManager();
   renderComposerStatus(state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null);
 }
 
-function removePendingImage(imageId) {
+async function removePendingImage(imageId) {
+  const target = state.pendingAttachments.find((image) => image.id === imageId);
   state.pendingAttachments = state.pendingAttachments.filter((image) => image.id !== imageId);
+  if (target) {
+    await deleteDraftAttachment(target);
+  }
   renderImageManager();
   renderComposerStatus(state.bootstrap?.sessions?.find((item) => item.id === state.activeSessionId) || null);
 }
@@ -2417,7 +2460,51 @@ function buildComposerStatus(session, running = Boolean(session) && isActiveSess
   if (!state.pendingAttachments.length) {
     return base;
   }
+  const pendingUploads = state.pendingAttachments.filter((attachment) => attachment.uploading).length;
+  const failedUploads = state.pendingAttachments.filter((attachment) => attachment.uploadError).length;
+  if (pendingUploads) {
+    return `Upload en cours · ${pendingUploads}`;
+  }
+  if (failedUploads) {
+    return `Upload incomplet · ${failedUploads}`;
+  }
   return `${base} · ${state.pendingAttachments.length} pièce${state.pendingAttachments.length > 1 ? "s" : ""}`;
+}
+
+async function uploadDraftAttachment(attachment) {
+  const response = await apiFetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/attachments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id: attachment.id,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      dataUrl: attachment.dataUrl,
+    }),
+  });
+
+  if (!response.ok) {
+    attachment.uploading = false;
+    attachment.uploadError = true;
+    return;
+  }
+
+  const payload = await response.json();
+  attachment.uploading = false;
+  attachment.uploadError = false;
+  attachment.draftId = payload.attachment?.draftId || attachment.id;
+  attachment.path = payload.attachment?.path || "";
+  attachment.relativePath = payload.attachment?.relativePath || "";
+}
+
+async function deleteDraftAttachment(attachment) {
+  if (!state.activeSessionId || !attachment?.draftId) {
+    return;
+  }
+  await apiFetch(
+    `/api/sessions/${encodeURIComponent(state.activeSessionId)}/attachments/${encodeURIComponent(attachment.draftId)}`,
+    { method: "DELETE" }
+  ).catch(() => null);
 }
 
 function formatAttachmentType(mimeType) {

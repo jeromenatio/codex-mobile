@@ -494,7 +494,7 @@ function registerRoutes() {
         return res.status(409).json({ error: "Codex is already processing this session" });
       }
 
-      const attachments = await persistAttachments(session, attachmentsInput);
+      const attachments = await materializeDraftAttachments(session, attachmentsInput);
       await appendUserMessage(session, text, attachments);
       void runSessionTurn(session, text, attachments);
 
@@ -556,6 +556,56 @@ function registerRoutes() {
     } catch (error) {
       console.error("Failed to interrupt session:", error);
       res.status(500).json({ error: error.message || "Failed to interrupt session" });
+    }
+  });
+
+  app.post("/api/sessions/:sessionId/attachments", async (req, res) => {
+    try {
+      const session = findSession(req.params.sessionId);
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+
+      const attachment = await persistDraftAttachment(session, req.body || {});
+      if (!attachment) {
+        return res.status(400).json({ error: "Invalid attachment payload" });
+      }
+
+      res.status(201).json({ attachment });
+    } catch (error) {
+      console.error("Failed to create attachment draft:", error);
+      res.status(500).json({ error: error.message || "Failed to create attachment draft" });
+    }
+  });
+
+  app.delete("/api/sessions/:sessionId/attachments/:attachmentId", async (req, res) => {
+    try {
+      const session = findSession(req.params.sessionId);
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+      const deleted = await deleteDraftAttachment(session, req.params.attachmentId);
+      if (!deleted) {
+        return res.status(404).json({ error: "Attachment draft not found" });
+      }
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Failed to delete attachment draft:", error);
+      res.status(500).json({ error: error.message || "Failed to delete attachment draft" });
+    }
+  });
+
+  app.delete("/api/sessions/:sessionId/attachments", async (req, res) => {
+    try {
+      const session = findSession(req.params.sessionId);
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+      await clearDraftAttachments(session);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Failed to clear attachment drafts:", error);
+      res.status(500).json({ error: error.message || "Failed to clear attachment drafts" });
     }
   });
 }
@@ -697,38 +747,19 @@ async function runSessionTurn(session, prompt, attachments = []) {
   }
 }
 
-async function persistAttachments(session, attachmentsInput) {
+async function materializeDraftAttachments(session, attachmentsInput) {
   const persisted = [];
 
   for (const attachment of attachmentsInput) {
-    const name = String(attachment?.name || "attachment").trim() || "attachment";
-    const dataUrl = String(attachment?.dataUrl || "");
-    const declaredMimeType = String(attachment?.mimeType || "").trim();
-
-    const match = dataUrl.match(/^data:([a-zA-Z0-9.+/-]+);base64,(.+)$/);
-    if (!match) {
+    const draftId = String(attachment?.draftId || attachment?.id || "").trim();
+    if (!draftId) {
       continue;
     }
 
-    const [, mimeType, base64] = match;
-    const normalizedMimeType = declaredMimeType || mimeType || "application/octet-stream";
-    const extension = resolveAttachmentExtension(name, normalizedMimeType);
-    const dir = getSessionUploadsDir(session);
-    await fsp.mkdir(dir, { recursive: true });
-
-    const filename = `${Date.now()}-${crypto.randomUUID()}.${extension}`;
-    const filePath = path.join(dir, filename);
-    await fsp.writeFile(filePath, Buffer.from(base64, "base64"));
-    const relativePath = path.relative(session.workspacePath, filePath) || filename;
-
-    persisted.push({
-      id: crypto.randomUUID(),
-      name,
-      mimeType: normalizedMimeType,
-      path: filePath,
-      relativePath,
-      isImage: normalizedMimeType.startsWith("image/"),
-    });
+    const materialized = await finalizeDraftAttachment(session, draftId);
+    if (materialized) {
+      persisted.push(materialized);
+    }
   }
 
   return persisted;
@@ -736,6 +767,100 @@ async function persistAttachments(session, attachmentsInput) {
 
 function getSessionUploadsDir(session) {
   return path.join(session.workspacePath, ".codex-mobile", "uploads", session.id);
+}
+
+function getSessionDraftsDir(session) {
+  return path.join(getSessionUploadsDir(session), ".drafts");
+}
+
+async function persistDraftAttachment(session, attachmentInput) {
+  const payload = normalizeAttachmentPayload(attachmentInput);
+  if (!payload) {
+    return null;
+  }
+
+  const dir = getSessionDraftsDir(session);
+  await fsp.mkdir(dir, { recursive: true });
+
+  const filename = `${payload.id}.${payload.extension}`;
+  const filePath = path.join(dir, filename);
+  await fsp.writeFile(filePath, payload.buffer);
+  await fsp.writeFile(
+    path.join(dir, `${payload.id}.json`),
+    JSON.stringify({
+      id: payload.id,
+      name: payload.name,
+      mimeType: payload.mimeType,
+      extension: payload.extension,
+    }, null, 2),
+    "utf8"
+  );
+
+  return {
+    id: payload.id,
+    draftId: payload.id,
+    name: payload.name,
+    mimeType: payload.mimeType,
+    path: filePath,
+    relativePath: path.relative(session.workspacePath, filePath) || filename,
+    isImage: payload.mimeType.startsWith("image/"),
+  };
+}
+
+async function finalizeDraftAttachment(session, draftId) {
+  const dir = getSessionDraftsDir(session);
+  let metadata;
+  try {
+    metadata = JSON.parse(await fsp.readFile(path.join(dir, `${draftId}.json`), "utf8"));
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+
+  const extension = String(metadata?.extension || "bin").replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase() || "bin";
+  const filename = `${draftId}.${extension}`;
+  const sourcePath = path.join(dir, filename);
+  const exists = await fsp.stat(sourcePath).then(() => true).catch(() => false);
+  if (!exists) {
+    return null;
+  }
+
+  const finalDir = getSessionUploadsDir(session);
+  await fsp.mkdir(finalDir, { recursive: true });
+  const targetFilename = buildStoredAttachmentFilename(metadata?.name || filename, draftId, extension);
+  const targetPath = path.join(finalDir, targetFilename);
+  await fsp.rename(sourcePath, targetPath);
+  await fsp.rm(path.join(dir, `${draftId}.json`), { force: true });
+
+  return {
+    id: draftId,
+    draftId,
+    name: String(metadata?.name || targetFilename),
+    mimeType: String(metadata?.mimeType || "application/octet-stream"),
+    path: targetPath,
+    relativePath: path.relative(session.workspacePath, targetPath) || targetFilename,
+    isImage: String(metadata?.mimeType || "").startsWith("image/"),
+  };
+}
+
+async function deleteDraftAttachment(session, draftId) {
+  const dir = getSessionDraftsDir(session);
+  const metaPath = path.join(dir, `${draftId}.json`);
+  const exists = await fsp.stat(metaPath).then(() => true).catch(() => false);
+  await fsp.rm(metaPath, { force: true });
+  const entries = await fsp.readdir(dir).catch(() => []);
+  for (const entry of entries) {
+    if (entry.startsWith(`${draftId}.`) && entry !== `${draftId}.json`) {
+      await fsp.rm(path.join(dir, entry), { force: true });
+    }
+  }
+  return exists || entries.some((entry) => entry.startsWith(`${draftId}.`));
+}
+
+async function clearDraftAttachments(session) {
+  await fsp.rm(getSessionDraftsDir(session), { recursive: true, force: true });
 }
 
 function resolveAttachmentExtension(name, mimeType) {
@@ -746,6 +871,38 @@ function resolveAttachmentExtension(name, mimeType) {
 
   const extFromMime = mimeType.split("/")[1]?.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
   return extFromMime || "bin";
+}
+
+function normalizeAttachmentPayload(input) {
+  const id = String(input?.id || crypto.randomUUID()).trim() || crypto.randomUUID();
+  const name = String(input?.name || "attachment").trim() || "attachment";
+  const dataUrl = String(input?.dataUrl || "");
+  const declaredMimeType = String(input?.mimeType || "").trim();
+  const match = dataUrl.match(/^data:([a-zA-Z0-9.+/-]+);base64,(.+)$/);
+  if (!match) {
+    return null;
+  }
+
+  const [, mimeType, base64] = match;
+  const normalizedMimeType = declaredMimeType || mimeType || "application/octet-stream";
+  const extension = resolveAttachmentExtension(name, normalizedMimeType);
+  const safeName = name.replace(/[^\w.\- ]+/g, "_");
+  const filename = `${id}.${extension}`;
+
+  return {
+    id,
+    name: safeName,
+    mimeType: normalizedMimeType,
+    extension,
+    filename,
+    buffer: Buffer.from(base64, "base64"),
+  };
+}
+
+function buildStoredAttachmentFilename(name, draftId, extension) {
+  const basename = path.basename(String(name || "attachment"), path.extname(String(name || "")));
+  const safeBase = basename.replace(/[^\w\- ]+/g, "_").trim() || "attachment";
+  return `${safeBase}-${draftId}.${extension}`;
 }
 
 async function ensureWorkspace(label) {

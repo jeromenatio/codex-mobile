@@ -265,6 +265,22 @@ test("auth et configuration app", async () => {
     }
     assert.equal(firstTurnComplete, true);
 
+    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/attachments`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({
+        id: "draft-notes",
+        name: "notes.txt",
+        mimeType: "text/plain",
+        dataUrl: `data:text/plain;base64,${Buffer.from("bonjour fichier", "utf8").toString("base64")}`,
+      }),
+    });
+    assert.equal(response.status, 201);
+    const uploadedDraft = await response.json();
+
     response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/message`, {
       method: "POST",
       headers: {
@@ -275,9 +291,7 @@ test("auth et configuration app", async () => {
         text: "avec fichier",
         attachments: [
           {
-            name: "notes.txt",
-            mimeType: "text/plain",
-            dataUrl: `data:text/plain;base64,${Buffer.from("bonjour fichier", "utf8").toString("base64")}`,
+            draftId: uploadedDraft.attachment.draftId,
           },
         ],
       }),
