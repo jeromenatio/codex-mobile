@@ -1797,11 +1797,19 @@ textarea {
   gap: 10px;
 }
 
+.composer-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 30px;
+  margin-bottom: 4px;
+}
+
 .composer-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .composer-status {
@@ -1809,7 +1817,7 @@ textarea {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  max-width: min(46vw, 220px);
+  max-width: min(72vw, 320px);
   font-size: 0.9rem;
   white-space: nowrap;
   overflow: hidden;

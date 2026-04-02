@@ -158,10 +158,12 @@
       </main>
 
       <section class="composer-wrap">
+        <div class="composer-status-row">
+          <div id="composerStatus" class="composer-status">Aucune session</div>
+        </div>
         <form id="messageForm" class="composer">
           <textarea id="messageInput" rows="1" placeholder="Écrire à Codex"></textarea>
           <div class="composer-footer">
-            <div id="composerStatus" class="composer-status">Aucune session</div>
             <div class="composer-actions">
               <input id="imageInput" type="file" multiple hidden />
               <button id="openPromptModal" class="plain-button icon-button action-button" type="button" aria-label="Prompts rapides">
