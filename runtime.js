@@ -313,6 +313,9 @@ function collectImageAttachmentPaths(attachments = []) {
         paths.push(derived.path);
       }
     }
+    for (const entryPath of collectImageAttachmentPaths(Array.isArray(attachment?.extractedEntries) ? attachment.extractedEntries : [])) {
+      paths.push(entryPath);
+    }
   }
   return paths;
 }
@@ -337,15 +340,55 @@ function buildAttachmentContextSections(attachment) {
     );
   }
 
+  const extractedEntries = Array.isArray(attachment?.extractedEntries) ? attachment.extractedEntries : [];
+  if (extractedEntries.length) {
+    sections.push(
+      "",
+      `Contenu extrait de ${attachment.name || attachment.relativePath || attachment.path} :`,
+      ...(attachment.extractedDirPath ? [`Dossier extrait : ${attachment.extractedDirPath}`] : []),
+      ...extractedEntries.slice(0, 60).map((entry) => `- ${entry.relativePath || entry.path}`),
+      ...buildNestedAttachmentSections(extractedEntries)
+    );
+  }
+
   return sections;
 }
 
-function truncateAttachmentText(text) {
+function buildNestedAttachmentSections(entries) {
+  const sections = [];
+  let remainingTextBudget = TEXT_CONTEXT_BUDGET;
+  for (const entry of entries) {
+    const derivedImages = Array.isArray(entry?.extractedImages) ? entry.extractedImages : [];
+    if (derivedImages.length) {
+      sections.push(
+        "",
+        `Images extraites depuis ${entry.name || entry.relativePath || entry.path} :`,
+        ...derivedImages.map((image) => `- ${image.relativePath || image.path}`)
+      );
+    }
+
+    const extractedText = String(entry?.extractedText || "").trim();
+    if (extractedText && remainingTextBudget > 0) {
+      const chunk = truncateAttachmentText(extractedText, remainingTextBudget);
+      sections.push(
+        "",
+        `Texte extrait de ${entry.name || entry.relativePath || entry.path} :`,
+        chunk
+      );
+      remainingTextBudget -= chunk.length;
+    }
+  }
+  return sections;
+}
+
+const TEXT_CONTEXT_BUDGET = 12000;
+
+function truncateAttachmentText(text, maxLength = 6000) {
   const normalized = String(text || "").trim();
-  if (normalized.length <= 6000) {
+  if (normalized.length <= maxLength) {
     return normalized;
   }
-  return `${normalized.slice(0, 6000).trim()}\n\n[texte tronqué]`;
+  return `${normalized.slice(0, maxLength).trim()}\n\n[texte tronqué]`;
 }
 
 function buildCodexPrefixArgs() {

@@ -8,6 +8,7 @@ const http = require("http");
 const { spawn, spawnSync } = require("child_process");
 const readline = require("readline");
 const WebSocket = require("ws");
+const AdmZip = require("adm-zip");
 const {
   createDatabase,
   DEFAULT_NOTIFICATION_DURATION_SECONDS,
@@ -40,6 +41,10 @@ const AUTH_COOKIE_NAME = "codex_mobile_auth";
 const AUTH_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 const RESERVED_SECRET_KEYS = new Set(["CODEX_MOBILE_AUTH_TOKEN"]);
 const PDF_IMAGE_PAGE_LIMIT = 5;
+const ZIP_ENTRY_LIMIT = 200;
+const ZIP_TOTAL_BYTES_LIMIT = 50 * 1024 * 1024;
+const TEXT_ATTACHMENT_READ_LIMIT = 60_000;
+const TEXT_ATTACHMENT_TOTAL_CONTEXT_LIMIT = 12_000;
 
 let pdfjsModulePromise = null;
 const pdftoppmAvailable = commandExists("pdftoppm");
@@ -901,17 +906,25 @@ async function clearDraftAttachments(session) {
 }
 
 async function enrichStoredAttachment(session, attachment) {
-  if (!isPdfAttachment(attachment)) {
-    return attachment;
+  if (isPdfAttachment(attachment)) {
+    return enrichPdfAttachment(session, attachment);
   }
-
-  return enrichPdfAttachment(session, attachment);
+  if (isZipAttachment(attachment)) {
+    return enrichZipAttachment(session, attachment);
+  }
+  return attachment;
 }
 
 function isPdfAttachment(attachment) {
   const mimeType = String(attachment?.mimeType || "").toLowerCase();
   const name = String(attachment?.name || "").toLowerCase();
   return mimeType === "application/pdf" || name.endsWith(".pdf");
+}
+
+function isZipAttachment(attachment) {
+  const mimeType = String(attachment?.mimeType || "").toLowerCase();
+  const name = String(attachment?.name || "").toLowerCase();
+  return mimeType.includes("zip") || name.endsWith(".zip");
 }
 
 async function enrichPdfAttachment(session, attachment) {
@@ -970,6 +983,75 @@ async function enrichPdfAttachment(session, attachment) {
   return enriched;
 }
 
+async function enrichZipAttachment(session, attachment) {
+  const enriched = {
+    ...attachment,
+    extractedDirPath: "",
+    extractedEntries: [],
+    archiveEntryCount: 0,
+    extractionError: "",
+  };
+
+  try {
+    const zip = new AdmZip(attachment.path);
+    const entries = zip.getEntries().filter((entry) => !entry.isDirectory);
+    enriched.archiveEntryCount = entries.length;
+    if (entries.length > ZIP_ENTRY_LIMIT) {
+      throw new Error(`Archive trop volumineuse (${entries.length} fichiers)`);
+    }
+
+    const totalBytes = entries.reduce((sum, entry) => sum + Number(entry.header?.size || entry.getData().length || 0), 0);
+    if (totalBytes > ZIP_TOTAL_BYTES_LIMIT) {
+      throw new Error("Archive trop volumineuse");
+    }
+
+    const parsed = path.parse(attachment.path);
+    const outputDir = path.join(parsed.dir, `${parsed.base}.extracted`);
+    await fsp.rm(outputDir, { recursive: true, force: true });
+    await fsp.mkdir(outputDir, { recursive: true });
+
+    const extractedEntries = [];
+    for (const entry of entries) {
+      const relativeEntryPath = sanitizeArchiveEntryPath(entry.entryName);
+      if (!relativeEntryPath) {
+        continue;
+      }
+      const targetPath = path.join(outputDir, relativeEntryPath);
+      await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+      const entryBuffer = entry.getData();
+      await fsp.writeFile(targetPath, entryBuffer);
+
+      const baseEntry = {
+        name: path.basename(relativeEntryPath),
+        mimeType: inferMimeTypeFromName(relativeEntryPath),
+        path: targetPath,
+        relativePath: path.relative(session.workspacePath, targetPath) || targetPath,
+        isImage: isImageFilename(relativeEntryPath),
+        size: entryBuffer.length,
+      };
+
+      let enrichedEntry = baseEntry;
+      if (isPdfAttachment(baseEntry)) {
+        enrichedEntry = await enrichPdfAttachment(session, baseEntry);
+      } else if (isTextLikeAttachment(baseEntry)) {
+        const extractedText = await readTextAttachment(targetPath);
+        if (extractedText) {
+          enrichedEntry = { ...baseEntry, extractedText };
+        }
+      }
+
+      extractedEntries.push(enrichedEntry);
+    }
+
+    enriched.extractedDirPath = path.relative(session.workspacePath, outputDir) || outputDir;
+    enriched.extractedEntries = extractedEntries;
+  } catch (error) {
+    enriched.extractionError = error.message || "ZIP extraction failed";
+  }
+
+  return enriched;
+}
+
 async function writePdfExtractedText(session, attachment, text) {
   const parsed = path.parse(attachment.path);
   const outputPath = path.join(parsed.dir, `${parsed.name}.extracted.txt`);
@@ -1012,6 +1094,77 @@ async function renderPdfPageImages(session, attachment, pageLimit) {
       page: index + 1,
     };
   });
+}
+
+function sanitizeArchiveEntryPath(entryPath) {
+  const normalized = path.posix.normalize(String(entryPath || "")).replace(/^(\.\.(\/|\\|$))+/, "");
+  if (!normalized || normalized.startsWith("..")) {
+    return "";
+  }
+  return normalized.split("/").filter(Boolean).join(path.sep);
+}
+
+function inferMimeTypeFromName(name) {
+  const lowerName = String(name || "").toLowerCase();
+  if (lowerName.endsWith(".pdf")) {
+    return "application/pdf";
+  }
+  if (/\.(png)$/i.test(lowerName)) {
+    return "image/png";
+  }
+  if (/\.(jpe?g)$/i.test(lowerName)) {
+    return "image/jpeg";
+  }
+  if (/\.(gif)$/i.test(lowerName)) {
+    return "image/gif";
+  }
+  if (/\.(webp)$/i.test(lowerName)) {
+    return "image/webp";
+  }
+  if (/\.(svg)$/i.test(lowerName)) {
+    return "image/svg+xml";
+  }
+  if (/\.(txt|md|csv|log)$/i.test(lowerName)) {
+    return "text/plain";
+  }
+  if (/\.(json)$/i.test(lowerName)) {
+    return "application/json";
+  }
+  if (/\.(ya?ml)$/i.test(lowerName)) {
+    return "text/yaml";
+  }
+  if (/\.(xml)$/i.test(lowerName)) {
+    return "application/xml";
+  }
+  if (/\.(js|mjs|cjs|ts|tsx|jsx|py|rb|php|java|c|cc|cpp|h|hpp|cs|go|rs|sh|bash|zsh|html|css|sql)$/i.test(lowerName)) {
+    return "text/plain";
+  }
+  if (lowerName.endsWith(".zip")) {
+    return "application/zip";
+  }
+  return "application/octet-stream";
+}
+
+function isImageFilename(name) {
+  return /\.(png|jpe?g|gif|webp|svg)$/i.test(String(name || ""));
+}
+
+function isTextLikeAttachment(attachment) {
+  const mimeType = String(attachment?.mimeType || "").toLowerCase();
+  const name = String(attachment?.name || "").toLowerCase();
+  return mimeType.startsWith("text/")
+    || mimeType === "application/json"
+    || mimeType === "application/xml"
+    || mimeType === "text/yaml"
+    || /\.(txt|md|csv|log|json|ya?ml|xml|js|mjs|cjs|ts|tsx|jsx|py|rb|php|java|c|cc|cpp|h|hpp|cs|go|rs|sh|bash|zsh|html|css|sql)$/i.test(name);
+}
+
+async function readTextAttachment(filePath) {
+  const buffer = await fsp.readFile(filePath);
+  if (!buffer.length) {
+    return "";
+  }
+  return buffer.toString("utf8").slice(0, TEXT_ATTACHMENT_READ_LIMIT).trim();
 }
 
 async function loadPdfjs() {

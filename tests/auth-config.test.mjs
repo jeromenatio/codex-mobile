@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
+import AdmZip from "adm-zip";
 
 const TMP_ROOT = await fsp.mkdtemp(path.join(os.tmpdir(), "codex-mobile-auth-"));
 const PORT = 4192;
@@ -382,6 +383,66 @@ test("auth et configuration app", async () => {
     }
     assert.equal(pdfTurnComplete, true);
 
+    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/attachments`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({
+        id: "draft-zip",
+        name: "bundle.zip",
+        mimeType: "application/zip",
+        dataUrl: zipDataUrl([
+          { name: "notes.txt", content: "Bonjour ZIP texte" },
+          { name: "docs/bonjour.pdf", content: buildMinimalPdfBuffer("Bonjour ZIP PDF") },
+        ]),
+      }),
+    });
+    assert.equal(response.status, 201);
+    const uploadedZip = await response.json();
+
+    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/message`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({
+        text: "avec zip",
+        attachments: [
+          {
+            draftId: uploadedZip.attachment.draftId,
+          },
+        ],
+      }),
+    });
+    assert.equal(response.status, 200);
+    const withZip = await response.json();
+    const storedZip = withZip.messages.at(-2).attachments[0];
+    assert.equal(storedZip.mimeType, "application/zip");
+    assert.equal(Array.isArray(storedZip.extractedEntries), true);
+    assert.equal(storedZip.extractedEntries.some((entry) => /notes\.txt$/i.test(entry.relativePath || "")), true);
+    assert.equal(storedZip.extractedEntries.some((entry) => /bonjour\.pdf$/i.test(entry.relativePath || "")), true);
+    const extractedTextEntry = storedZip.extractedEntries.find((entry) => /notes\.txt$/i.test(entry.relativePath || ""));
+    assert.match(extractedTextEntry?.extractedText || "", /Bonjour ZIP texte/);
+    const extractedPdfEntry = storedZip.extractedEntries.find((entry) => /bonjour\.pdf$/i.test(entry.relativePath || ""));
+    assert.match(extractedPdfEntry?.extractedText || "", /Bonjour ZIP PDF/);
+
+    let zipTurnComplete = false;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/export`, {
+        headers: { cookie },
+      });
+      const snapshot = await response.json();
+      if (!snapshot.session.messages.at(-1)?.pending) {
+        zipTurnComplete = true;
+        break;
+      }
+      await delay(150);
+    }
+    assert.equal(zipTurnComplete, true);
+
     response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/retry`, {
       method: "POST",
       headers: { cookie },
@@ -389,9 +450,9 @@ test("auth et configuration app", async () => {
     assert.equal(response.status, 200);
     const retried = await response.json();
     assert.equal(Array.isArray(retried.messages), true);
-    assert.equal(retried.messages.length, 8);
+    assert.equal(retried.messages.length, 10);
     assert.equal(retried.messages.at(-2).role, "user");
-    assert.equal(retried.messages.at(-2).text, "avec pdf");
+    assert.equal(retried.messages.at(-2).text, "avec zip");
     assert.equal(retried.messages.at(-2).attachments.length, 1);
     assert.equal(retried.messages.at(-1).role, "assistant");
     assert.equal(retried.messages.at(-1).pending, true);
@@ -405,7 +466,7 @@ test("auth et configuration app", async () => {
     assert.equal(exported.session.id, created.session.id);
     assert.equal(exported.session.workspaceName, "api-suite");
     assert.equal(Array.isArray(exported.session.messages), true);
-    assert.equal(exported.session.messages.length, 8);
+    assert.equal(exported.session.messages.length, 10);
     assert.equal(exported.session.messages[0].text, "bonjour");
 
     let retryTurnComplete = false;
@@ -573,6 +634,15 @@ async function waitForServer() {
 
 function pdfDataUrl(text) {
   return `data:application/pdf;base64,${buildMinimalPdfBuffer(text).toString("base64")}`;
+}
+
+function zipDataUrl(entries) {
+  const zip = new AdmZip();
+  for (const entry of entries) {
+    const content = Buffer.isBuffer(entry.content) ? entry.content : Buffer.from(String(entry.content || ""), "utf8");
+    zip.addFile(entry.name, content);
+  }
+  return `data:application/zip;base64,${zip.toBuffer().toString("base64")}`;
 }
 
 function buildMinimalPdfBuffer(text) {
