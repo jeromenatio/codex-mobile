@@ -40,6 +40,11 @@ if [[ ! -f "${APP_DIR}/server.js" ]]; then
   exit 1
 fi
 
+if [[ ! -f "${APP_DIR}/runtime.js" ]]; then
+  echo "runtime.js introuvable dans ${APP_DIR}" >&2
+  exit 1
+fi
+
 if [[ -z "${RUN_USER}" ]]; then
   RUN_USER="$(stat -c '%U' "${APP_DIR}" 2>/dev/null || true)"
   RUN_USER="${RUN_USER:-${SUDO_USER:-root}}"

@@ -13,6 +13,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/jeromenatio/codex-mobile/mai
 Le script :
 - installe `git`, `curl`, `node`, `npm` et `codex` si besoin
 - installe aussi `openssl` pour générer le token d'accès
+- installe aussi `build-essential` et `python3` pour les dépendances natives Node
+- installe `poppler-utils` pour l'extraction d'images PDF
 - clone ou met à jour le repo dans `/projects/codex-mobile`
 - lance `npm install`
 - demande si tu gardes le root workspace par défaut `/projects`
@@ -66,7 +68,7 @@ Si tu préfères faire l'installation étape par étape :
 
 ```bash
 sudo apt update
-sudo apt install -y git curl ca-certificates gnupg openssl poppler-utils
+sudo apt install -y git curl ca-certificates gnupg openssl poppler-utils build-essential python3
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt install -y nodejs
 sudo npm install -g @openai/codex

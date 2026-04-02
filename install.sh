@@ -62,7 +62,7 @@ prompt_yes_no() {
 
 install_base_packages() {
   run_root apt update
-  run_root apt install -y git curl ca-certificates gnupg openssl poppler-utils
+  run_root apt install -y git curl ca-certificates gnupg openssl poppler-utils build-essential python3
 }
 
 install_node_if_needed() {
