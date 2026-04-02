@@ -19,6 +19,7 @@ const {
 loadEnvFile(process.env.CODEX_MOBILE_ENV_FILE || "/etc/codex-mobile/.env");
 
 const PORT = Number(process.env.PORT || 4180);
+const JSON_BODY_LIMIT = process.env.CODEX_MOBILE_JSON_BODY_LIMIT || "60mb";
 const ROOT_DIR = __dirname;
 const TEST_MODE = process.env.CODEX_MOBILE_TEST_MODE === "1";
 const FORCE_AUTH = process.env.CODEX_MOBILE_FORCE_AUTH === "1";
@@ -54,7 +55,7 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: "/ws" });
 
-app.use(express.json({ limit: "25mb" }));
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
 app.use("/assets/bootstrap-icons", express.static(path.join(ROOT_DIR, "node_modules", "bootstrap-icons"), {
   setHeaders: setNoCacheHeaders,
 }));
