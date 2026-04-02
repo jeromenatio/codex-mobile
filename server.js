@@ -35,6 +35,7 @@ const CODEX_CONFIG_FILE = process.env.CODEX_MOBILE_CONFIG_FILE || path.join(CODE
 const CODEX_MODELS_CACHE_FILE = process.env.CODEX_MOBILE_MODELS_CACHE_FILE || path.join(CODEX_HOME_DIR, "models_cache.json");
 const CODEX_THREADS_DB_FILE = process.env.CODEX_MOBILE_THREADS_DB_FILE || path.join(CODEX_HOME_DIR, "state_5.sqlite");
 const CODEX_MOBILE_ENV_FILE = process.env.CODEX_MOBILE_ENV_FILE || "/etc/codex-mobile/.env";
+const SESSION_CONTEXT_FILE = process.env.CODEX_MOBILE_SESSION_CONTEXT_FILE || path.join(ROOT_DIR, "SESSION_CONTEXT.md");
 const AUTH_TOKEN = String(process.env.CODEX_MOBILE_AUTH_TOKEN || "").trim();
 const AUTH_ENABLED = (FORCE_AUTH || !TEST_MODE) && Boolean(AUTH_TOKEN);
 const AUTH_COOKIE_NAME = "codex_mobile_auth";
@@ -69,6 +70,7 @@ const database = createDatabase(DB_FILE, DEFAULT_WORKSPACE_ROOT, STATE_FILE);
 let persistedState = database.loadState();
 let runtimeSyncTimer = null;
 let runtimeSyncInFlight = false;
+let sessionContextCache = null;
 
 boot().catch((error) => {
   console.error("Boot failed:", error);
@@ -505,7 +507,7 @@ function registerRoutes() {
 
       const attachments = await materializeDraftAttachments(session, attachmentsInput);
       await appendUserMessage(session, text, attachments);
-      void runSessionTurn(session, text, attachments);
+      void runSessionTurn(session, buildSessionTurnPrompt(session, text), attachments);
 
       res.json({
         ok: true,
@@ -536,7 +538,7 @@ function registerRoutes() {
 
       const attachments = Array.isArray(sourceMessage.attachments) ? sourceMessage.attachments : [];
       await appendUserMessage(session, sourceMessage.text || "", attachments);
-      void runSessionTurn(session, sourceMessage.text || "", attachments);
+      void runSessionTurn(session, buildSessionTurnPrompt(session, sourceMessage.text || ""), attachments);
 
       res.json({
         ok: true,
@@ -719,7 +721,7 @@ async function createSession(workspaceLabel, initialPrompt) {
 
   if (initialPrompt) {
     await appendUserMessage(session, initialPrompt);
-    runSessionTurn(session, initialPrompt);
+    runSessionTurn(session, buildSessionTurnPrompt(session, initialPrompt));
   }
 
   return sanitizeSession(session);
@@ -785,6 +787,51 @@ async function runSessionTurn(session, prompt, attachments = []) {
       code: 1,
     });
   }
+}
+
+function buildSessionTurnPrompt(session, userPrompt) {
+  const prompt = String(userPrompt || "");
+  if (session?.threadId) {
+    return prompt;
+  }
+
+  const context = renderSessionContext(session).trim();
+  if (!context) {
+    return prompt;
+  }
+
+  return [
+    context,
+    "",
+    "Demande utilisateur :",
+    prompt,
+  ].join("\n").trim();
+}
+
+function renderSessionContext(session) {
+  const template = loadSessionContextTemplate().trim();
+  if (!template) {
+    return "";
+  }
+
+  return template
+    .replaceAll("{{workspaceName}}", String(session?.workspaceName || ""))
+    .replaceAll("{{workspacePath}}", String(session?.workspacePath || ""))
+    .replaceAll("{{workspaceRoot}}", String(session?.workspaceRoot || ""))
+    .replaceAll("{{sessionId}}", String(session?.id || ""));
+}
+
+function loadSessionContextTemplate() {
+  if (sessionContextCache !== null) {
+    return sessionContextCache;
+  }
+
+  try {
+    sessionContextCache = fs.readFileSync(SESSION_CONTEXT_FILE, "utf8");
+  } catch {
+    sessionContextCache = "";
+  }
+  return sessionContextCache;
 }
 
 async function materializeDraftAttachments(session, attachmentsInput) {

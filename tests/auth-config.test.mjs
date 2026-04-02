@@ -16,6 +16,7 @@ const WORKSPACE_ROOT = path.join(TMP_ROOT, "workspaces");
 const CONFIG_FILE = path.join(TMP_ROOT, "codex-config.toml");
 const MODELS_CACHE_FILE = path.join(TMP_ROOT, "models-cache.json");
 const ENV_FILE = path.join(TMP_ROOT, "codex-mobile.env");
+const SESSION_CONTEXT_FILE = path.join(TMP_ROOT, "session-context.md");
 const RUNTIME_SOCKET_FILE = path.join(TMP_ROOT, "runtime.sock");
 const RUNTIME_STATE_FILE = path.join(TMP_ROOT, "runtime-state.json");
 const RUNTIME_PID_FILE = path.join(TMP_ROOT, "runtime.pid");
@@ -233,6 +234,90 @@ test("auth et configuration app", async () => {
     assert.equal(response.status, 201);
     const created = await response.json();
     assert.equal(created.session.workspaceName, "api-suite");
+
+    response = await fetch(`${BASE_URL}/api/sessions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ workspace: "context-suite", prompt: "" }),
+    });
+    assert.equal(response.status, 201);
+    const contextSession = await response.json();
+
+    response = await fetch(`${BASE_URL}/api/sessions/${contextSession.session.id}/message`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ text: "__SLOW__ first", attachments: [] }),
+    });
+    assert.equal(response.status, 200);
+
+    let firstPrompt = "";
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      let state = { runs: [] };
+      try {
+        state = JSON.parse(await fsp.readFile(RUNTIME_STATE_FILE, "utf8"));
+      } catch {}
+      const run = Array.isArray(state.runs) ? state.runs.find((entry) => entry.sessionId === contextSession.session.id) : null;
+      firstPrompt = String(run?.prompt || "");
+      if (firstPrompt) {
+        break;
+      }
+      await delay(100);
+    }
+    assert.match(firstPrompt, /SESSION_CONTEXT_MARKER/);
+    assert.match(firstPrompt, /context-suite/);
+    assert.match(firstPrompt, /Demande utilisateur :/);
+
+    response = await fetch(`${BASE_URL}/api/sessions/${contextSession.session.id}/interrupt`, {
+      method: "POST",
+      headers: { cookie },
+    });
+    assert.equal(response.status, 200);
+
+    let contextInterrupted = false;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      response = await fetch(`${BASE_URL}/api/sessions/${contextSession.session.id}/export`, {
+        headers: { cookie },
+      });
+      const snapshot = await response.json();
+      const lastMessage = snapshot.session.messages.at(-1);
+      if (lastMessage && !lastMessage.pending) {
+        contextInterrupted = true;
+        break;
+      }
+      await delay(100);
+    }
+    assert.equal(contextInterrupted, true);
+
+    response = await fetch(`${BASE_URL}/api/sessions/${contextSession.session.id}/message`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ text: "__SLOW__ second", attachments: [] }),
+    });
+    assert.equal(response.status, 200);
+
+    let secondPrompt = "";
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      let state = { runs: [] };
+      try {
+        state = JSON.parse(await fsp.readFile(RUNTIME_STATE_FILE, "utf8"));
+      } catch {}
+      const run = Array.isArray(state.runs) ? state.runs.find((entry) => entry.sessionId === contextSession.session.id) : null;
+      secondPrompt = String(run?.prompt || "");
+      if (secondPrompt.includes("__SLOW__ second")) {
+        break;
+      }
+      await delay(100);
+    }
+    assert.doesNotMatch(secondPrompt, /SESSION_CONTEXT_MARKER/);
 
     response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/message`, {
       method: "POST",
@@ -543,6 +628,15 @@ async function startServer() {
     `CODEX_MOBILE_AUTH_TOKEN=${AUTH_TOKEN}\nGITHUB_TOKEN=${INITIAL_GITHUB_TOKEN}\n`,
     "utf8"
   );
+  await fsp.writeFile(
+    SESSION_CONTEXT_FILE,
+    [
+      "SESSION_CONTEXT_MARKER",
+      "Workspace: {{workspaceName}}",
+      "Path: {{workspacePath}}",
+    ].join("\\n"),
+    "utf8"
+  );
 
   serverProcess = spawn("node", ["server.js"], {
     cwd: process.cwd(),
@@ -557,6 +651,7 @@ async function startServer() {
       CODEX_MOBILE_CONFIG_FILE: CONFIG_FILE,
       CODEX_MOBILE_MODELS_CACHE_FILE: MODELS_CACHE_FILE,
       CODEX_MOBILE_ENV_FILE: ENV_FILE,
+      CODEX_MOBILE_SESSION_CONTEXT_FILE: SESSION_CONTEXT_FILE,
       CODEX_MOBILE_RUNTIME_SOCKET: RUNTIME_SOCKET_FILE,
       CODEX_MOBILE_RUNTIME_STATE_FILE: RUNTIME_STATE_FILE,
       CODEX_MOBILE_RUNTIME_PID_FILE: RUNTIME_PID_FILE,

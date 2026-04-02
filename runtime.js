@@ -167,6 +167,9 @@ function startRun(run) {
 }
 
 function startFakeRun(run) {
+  if (!run.threadId) {
+    run.threadId = `test-thread-${run.sessionId}`;
+  }
   const delay = run.prompt.includes("__SLOW__") ? 5000 : 120;
   const timer = setTimeout(() => {
     run.process = null;

@@ -10,6 +10,12 @@ Commande recommandée sur Ubuntu :
 bash <(curl -fsSL https://raw.githubusercontent.com/jeromenatio/codex-mobile/main/install.sh)
 ```
 
+Version détachée via `systemd-run` pour les installs distantes fragiles :
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/jeromenatio/codex-mobile/main/install-detached.sh)
+```
+
 Le script :
 - installe `git`, `curl`, `node`, `npm` et `codex` si besoin
 - installe aussi `openssl` pour générer le token d'accès
@@ -23,6 +29,11 @@ Le script :
 - garde une place pour `GITHUB_TOKEN`
 - lance `codex login` si Codex n'est pas déjà connecté
 - peut installer et démarrer les services systemd `codex-mobile` et `codex-mobile-runtime`
+
+Le wrapper `install-detached.sh` :
+- lance l'installation dans une unité `systemd` indépendante
+- évite qu'une coupure SSH interrompe le script
+- permet de relire le code `codex login` dans `journalctl`
 
 ## Après installation
 

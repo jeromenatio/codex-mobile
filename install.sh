@@ -7,14 +7,17 @@ APP_DIR="${APP_DIR:-/projects/codex-mobile}"
 DEFAULT_WORKSPACE_ROOT="${DEFAULT_WORKSPACE_ROOT:-/projects}"
 CODEX_MOBILE_INSTALL_ENV_DIR="${CODEX_MOBILE_INSTALL_ENV_DIR:-/etc/codex-mobile}"
 CODEX_MOBILE_INSTALL_ENV_FILE="${CODEX_MOBILE_INSTALL_ENV_FILE:-${CODEX_MOBILE_INSTALL_ENV_DIR}/.env}"
+CODEX_MOBILE_INSTALL_NONINTERACTIVE="${CODEX_MOBILE_INSTALL_NONINTERACTIVE:-0}"
+CODEX_MOBILE_INSTALL_WORKSPACE_ROOT="${CODEX_MOBILE_INSTALL_WORKSPACE_ROOT:-}"
+CODEX_MOBILE_INSTALL_LOGIN_MODE="${CODEX_MOBILE_INSTALL_LOGIN_MODE:-auto}"
 SERVICE_INSTALL="${SERVICE_INSTALL:-yes}"
 SERVICE_INSTALLED="no"
 AUTH_TOKEN_VALUE=""
 NODE_BIN=""
 NPM_BIN=""
-INSTALL_USER="${SUDO_USER:-$(id -un)}"
-INSTALL_GROUP="$(id -gn "${INSTALL_USER}")"
-INSTALL_HOME="$(getent passwd "${INSTALL_USER}" | cut -d: -f6)"
+INSTALL_USER="${CODEX_MOBILE_INSTALL_USER:-${SUDO_USER:-$(id -un)}}"
+INSTALL_GROUP="${CODEX_MOBILE_INSTALL_GROUP:-$(id -gn "${INSTALL_USER}")}"
+INSTALL_HOME="${CODEX_MOBILE_INSTALL_HOME:-$(getent passwd "${INSTALL_USER}" | cut -d: -f6)}"
 
 if ! command -v sudo >/dev/null 2>&1 && [[ "${EUID}" -ne 0 ]]; then
   echo "sudo est requis pour lancer l'installation." >&2
@@ -43,6 +46,11 @@ prompt_yes_no() {
   local question="$1"
   local default_answer="${2:-y}"
   local reply
+
+  if [[ "${CODEX_MOBILE_INSTALL_NONINTERACTIVE}" == "1" ]]; then
+    [[ "${default_answer}" == "y" ]]
+    return
+  fi
 
   while true; do
     if [[ "${default_answer}" == "y" ]]; then
@@ -122,6 +130,11 @@ install_project_dependencies() {
 
 prompt_workspace_root() {
   local reply
+  if [[ -n "${CODEX_MOBILE_INSTALL_WORKSPACE_ROOT}" ]]; then
+    WORKSPACE_ROOT="${CODEX_MOBILE_INSTALL_WORKSPACE_ROOT}"
+    return
+  fi
+
   if prompt_yes_no "Garder le dossier racine des workspaces par defaut (${DEFAULT_WORKSPACE_ROOT}) ?" "y"; then
     WORKSPACE_ROOT="${DEFAULT_WORKSPACE_ROOT}"
     return
@@ -223,9 +236,23 @@ ensure_codex_login() {
 
   rm -f /tmp/codex-mobile-login-status.txt
   local login_args=()
-  if [[ -n "${SSH_CONNECTION:-}" && -z "${DISPLAY:-}" ]]; then
-    login_args=(--device-auth)
-  fi
+  case "${CODEX_MOBILE_INSTALL_LOGIN_MODE}" in
+    device)
+      login_args=(--device-auth)
+      ;;
+    auto)
+      if [[ -n "${SSH_CONNECTION:-}" && -z "${DISPLAY:-}" ]]; then
+        login_args=(--device-auth)
+      fi
+      ;;
+    browser)
+      login_args=()
+      ;;
+    *)
+      echo "Mode de login invalide: ${CODEX_MOBILE_INSTALL_LOGIN_MODE}" >&2
+      exit 1
+      ;;
+  esac
 
   echo
   echo "Codex n'est pas connecte."
