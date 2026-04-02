@@ -31,6 +31,13 @@ test("suite e2e exhaustive hors voix", async (t) => {
     await t.test("etat vide et creation auto-selectionnee", async () => {
       const { page, context } = await newPage();
 
+      await waitFor(async () => {
+        assert.equal(
+          await page.locator("#serverHealthIndicator").evaluate((node) => node.classList.contains("ok")),
+          true
+        );
+      });
+
       await openSidebar(page);
       await expectText(page.locator("#sessionList"), "Aucune session.");
       await openMenu(page);

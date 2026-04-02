@@ -470,8 +470,8 @@ async function refreshServerHealth() {
 function updateServerHealthIndicator(isHealthy) {
   elements.serverHealthIndicator.classList.toggle("ok", isHealthy);
   elements.serverHealthIndicator.classList.toggle("down", !isHealthy);
-  elements.serverHealthIndicator.setAttribute("title", isHealthy ? "Serveur disponible" : "Serveur indisponible");
-  elements.serverHealthIndicator.setAttribute("aria-label", isHealthy ? "Serveur disponible" : "Serveur indisponible");
+  elements.serverHealthIndicator.setAttribute("title", isHealthy ? "Serveur et runtime disponibles" : "Serveur ou runtime indisponible");
+  elements.serverHealthIndicator.setAttribute("aria-label", isHealthy ? "Serveur et runtime disponibles" : "Serveur ou runtime indisponible");
 }
 
 function closeAuthGate() {
@@ -608,7 +608,17 @@ function renderSessionList() {
   elements.workspaceCount.textContent = `${workspaces.length} workspace${workspaces.length > 1 ? "s" : ""}`;
 
   if (!filteredSessions.length) {
-    elements.sessionList.innerHTML = `<p class="empty-state">${sessions.length ? "Aucun résultat." : "Aucune session."}</p>`;
+    const text = sessions.length ? "Aucun résultat." : "Aucune session.";
+    const hint = sessions.length
+      ? "Essaie un autre mot-clé ou le nom du workspace."
+      : "Crée une première session pour lancer un tour Codex.";
+    elements.sessionList.innerHTML = `
+      <div class="empty-state-panel">
+        <i class="bi bi-chat-left-text" aria-hidden="true"></i>
+        <p class="empty-state">${text}</p>
+        <small>${hint}</small>
+      </div>
+    `;
     return;
   }
 
@@ -622,8 +632,6 @@ function renderSessionList() {
             <button
               class="session-main"
               type="button"
-              data-action="open"
-              data-session-id="${session.id}"
               title="${escapeHtml(session.name)}"
             >
               <span class="session-name">${escapeHtml(session.name)}</span>
@@ -646,9 +654,9 @@ function renderSessionList() {
     })
     .join("");
 
-  for (const button of elements.sessionList.querySelectorAll("[data-action='open']")) {
-    button.addEventListener("click", async () => {
-      await activateSession(button.dataset.sessionId);
+  for (const item of elements.sessionList.querySelectorAll(".session-item")) {
+    item.addEventListener("click", async () => {
+      await activateSession(item.dataset.sessionId);
       closeSidebar();
     });
   }
@@ -847,6 +855,7 @@ async function onCreateSession(event) {
   elements.workspaceInput.value = "";
   elements.promptInput.value = "";
   closeCreateModal();
+  closeSidebar();
   notify("success", "Session créée.");
   await activateSession(payload.session.id);
 }
@@ -911,7 +920,13 @@ async function onSendMessage(event) {
 
 function renderMessages(shouldScroll = false) {
   if (!state.messages.length) {
-    elements.messages.innerHTML = `<div class="empty-chat">Démarre une session puis écris à Codex.</div>`;
+    elements.messages.innerHTML = `
+      <div class="empty-chat">
+        <i class="bi bi-stars" aria-hidden="true"></i>
+        <strong>Aucune conversation active</strong>
+        <p>Démarre une session puis écris à Codex.</p>
+      </div>
+    `;
     updateScrollDockVisibility();
     return;
   }
@@ -924,6 +939,8 @@ function renderMessages(shouldScroll = false) {
       const pending = message.pending ? "pending" : "";
       const body = escapeHtml(message.text || (message.pending ? "Codex réfléchit" : ""));
       const canRetry = message.role === "user" && message.id === latestUserMessageId;
+      const roleLabel = message.role === "user" ? "Vous" : "Codex";
+      const roleClass = message.role === "user" ? "user" : "assistant";
       return `
         <article class="bubble ${message.role} ${pending}">
           <div class="bubble-tools">
@@ -942,7 +959,10 @@ function renderMessages(shouldScroll = false) {
               <i class="bi bi-copy" aria-hidden="true"></i>
             </button>
           </div>
-          <div class="bubble-meta">${message.role === "user" ? "Vous" : "Codex"} · ${escapeHtml(formatDate(message.createdAt))}</div>
+          <div class="bubble-meta">
+            <span class="bubble-role ${roleClass}">${roleLabel}</span>
+            <span class="bubble-time">${escapeHtml(formatDate(message.createdAt))}</span>
+          </div>
           <div class="bubble-body markdown-body">${renderMarkdown(body)}${
             message.pending ? '<span class="typing-dots" aria-hidden="true"><span></span><span></span><span></span></span>' : ""
           }</div>
@@ -1099,7 +1119,6 @@ function autoResizeMessageInput() {
 }
 
 function openCreateModal() {
-  closeSidebar();
   closeMenuDrawer();
   closeConfigModal();
   closePromptModal();
@@ -1259,7 +1278,13 @@ function syncSecretEditorFields() {
 
 function renderSecretsList() {
   if (!state.secrets.length) {
-    elements.secretsList.innerHTML = `<div class="empty-chat">Aucun secret enregistré.</div>`;
+    elements.secretsList.innerHTML = `
+      <div class="empty-state-panel compact">
+        <i class="bi bi-key" aria-hidden="true"></i>
+        <p class="empty-state">Aucun secret enregistré.</p>
+        <small>Ajoute ici tes tokens et identifiants d'infrastructure.</small>
+      </div>
+    `;
     return;
   }
 
@@ -1663,7 +1688,13 @@ async function insertSttTranscript() {
 function renderPromptList() {
   const prompts = state.settings.prompts || [];
   if (!prompts.length) {
-    elements.promptList.innerHTML = `<div class="empty-state prompt-empty">Aucun prompt enregistré.</div>`;
+    elements.promptList.innerHTML = `
+      <div class="empty-state-panel compact prompt-empty">
+        <i class="bi bi-lightning-charge" aria-hidden="true"></i>
+        <p class="empty-state">Aucun prompt enregistré.</p>
+        <small>Crée des raccourcis pour tes demandes récurrentes.</small>
+      </div>
+    `;
     return;
   }
 
@@ -1824,7 +1855,13 @@ function renderImageManager() {
   }
 
   if (!state.pendingAttachments.length) {
-    elements.imageManagerList.innerHTML = `<div class="empty-state image-empty">Aucune image attachée.</div>`;
+    elements.imageManagerList.innerHTML = `
+      <div class="empty-state-panel compact image-empty">
+        <i class="bi bi-image" aria-hidden="true"></i>
+        <p class="empty-state">Aucune image attachée.</p>
+        <small>Ajoute une ou plusieurs images pour le prochain message.</small>
+      </div>
+    `;
     return;
   }
 
@@ -1866,7 +1903,6 @@ function closeConfirmModelModal() {
 }
 
 function openRenameModal(session) {
-  closeSidebar();
   closeCreateModal();
   closeConfigModal();
   closeSecretsModal();
@@ -1888,7 +1924,6 @@ function closeRenameModal() {
 }
 
 function openDeleteModal({ title = "Confirmation", text = "", confirmLabel = "Supprimer", onConfirm } = {}) {
-  closeSidebar();
   closeMenuDrawer();
   closeCreateModal();
   closeConfigModal();
@@ -2346,8 +2381,18 @@ function removePendingImage(imageId) {
 }
 
 function buildComposerStatus(session, running = Boolean(session) && isActiveSessionRunning()) {
-  const sessionStatus = running ? "running" : session?.status || "idle";
-  const base = session ? sessionStatus : "Aucune session";
+  let base = "Aucune session";
+  if (session) {
+    if (running) {
+      base = "Réponse en cours";
+    } else if (session.status === "interrupted") {
+      base = "Interrompu";
+    } else if (session.status === "error") {
+      base = "Erreur";
+    } else {
+      base = "Prêt";
+    }
+  }
   if (!state.pendingAttachments.length) {
     return base;
   }
@@ -2358,7 +2403,7 @@ function renderComposerStatus(session, running = Boolean(session) && isActiveSes
   const status = running ? "running" : session?.status || "idle";
   const label = escapeHtml(buildComposerStatus(session, running));
   const loading = status === "running" ? '<span class="loading-inline loading-inline-sm" aria-hidden="true"></span>' : "";
-  elements.composerStatus.innerHTML = `${loading}<span>${label}</span>`;
+  elements.composerStatus.innerHTML = `${loading}<span class="composer-status-text">${label}</span>`;
 }
 
 function readFileAsDataUrl(file) {
