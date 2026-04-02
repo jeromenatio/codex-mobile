@@ -306,6 +306,9 @@ test("auth et configuration app", async () => {
     }
     assert.match(firstPrompt, /SESSION_CONTEXT_MARKER/);
     assert.match(firstPrompt, /context-suite/);
+    assert.match(firstPrompt, /\/etc\/codex-mobile\/\.env/);
+    assert.match(firstPrompt, /GITHUB_TOKEN/);
+    assert.match(firstPrompt, /HETZNER/);
     assert.match(firstPrompt, /Demande utilisateur :/);
 
     response = await fetch(`${BASE_URL}/api/sessions/${contextSession.session.id}/interrupt`, {
@@ -669,6 +672,8 @@ async function startServer() {
       "SESSION_CONTEXT_MARKER",
       "Workspace: {{workspaceName}}",
       "Path: {{workspacePath}}",
+      "Secrets: /etc/codex-mobile/.env",
+      "Examples: GITHUB_TOKEN, HETZNER",
     ].join("\\n"),
     "utf8"
   );

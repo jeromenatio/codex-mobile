@@ -12,6 +12,10 @@ Règles de travail :
 - Les PDF peuvent avoir un texte extrait et, si possible, des images extraites.
 - Les ZIP peuvent être extraits côté serveur dans un sous-dossier `.zip.extracted`, avec inventaire et contexte utile ajoutés.
 - Quand des pièces jointes existent, leurs chemins workspace-relatifs peuvent être utilisés directement.
+- Les secrets enregistrés depuis l'UI sont stockés dans `/etc/codex-mobile/.env`.
+- Tu peux t'appuyer sur ces secrets pour des tâches d'infrastructure ou d'intégration, par exemple :
+  - gérer un dépôt GitHub, faire un commit et un push avec `GITHUB_TOKEN`
+  - créer ou administrer un serveur via l'API Hetzner avec `HETZNER`
 - Pour les commandes courtes et locales, utilise le shell normalement.
 - Si la tâche est longue, fragile, distante via SSH, ou risque d'être interrompue par une coupure de session, un redémarrage de service, un relogin, une installation ou un déploiement, préfère un job détaché avec `systemd-run`.
 - Pour ces jobs détachés, lance une unité nommée puis suis son état avec `systemctl status` et ses logs avec `journalctl`.
