@@ -35,6 +35,17 @@ Le wrapper `install-detached.sh` :
 - évite qu'une coupure SSH interrompe le script
 - permet de relire le code `codex login` dans `journalctl`
 
+Le contexte initial de session est défini dans :
+
+```text
+SESSION_CONTEXT.md
+```
+
+Il est injecté une seule fois au premier tour d'une session pour expliquer à Codex :
+- comment sont gérées les pièces jointes
+- où elles sont stockées dans le workspace
+- quand préférer `systemd-run` pour les tâches longues ou fragiles
+
 ## Après installation
 
 Si tu n'as pas choisi l'installation du service systemd :

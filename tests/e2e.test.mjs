@@ -539,13 +539,23 @@ async function sendMessage(page, text) {
   await waitFor(async () => {
     const label = await page.locator("#sendButton").getAttribute("aria-label");
     const disabled = await page.locator("#messageInput").isDisabled();
+    const sendDisabled = await page.locator("#sendButton").isDisabled();
     const pendingCount = await page.locator(".bubble.assistant.pending").count();
     assert.equal(label, "Envoyer");
     assert.equal(disabled, false);
+    assert.equal(sendDisabled, false);
     assert.equal(pendingCount, 0);
   }, 5000);
+  const userCountBefore = await page.locator(".bubble.user").count();
+  const pendingCountBefore = await page.locator(".bubble.assistant.pending").count();
   await page.fill("#messageInput", text);
   await clickDom(page, "#sendButton");
+  await waitFor(async () => {
+    const userCountAfter = await page.locator(".bubble.user").count();
+    const pendingCountAfter = await page.locator(".bubble.assistant.pending").count();
+    assert.equal(userCountAfter, userCountBefore + 1);
+    assert.ok(pendingCountAfter >= pendingCountBefore + 1);
+  }, 5000);
 }
 
 async function clickDom(target, selector) {
