@@ -9,19 +9,34 @@
   </head>
   <body class="auth-locked">
     <section id="authGate" class="auth-gate open" aria-hidden="false">
-      <div class="auth-card" role="dialog" aria-modal="true" aria-labelledby="authTitle">
-        <div class="auth-copy">
+      <div class="auth-shell">
+        <div class="auth-brand">
+          <div class="auth-logo auth-logo-orbit" aria-hidden="true">
+            <span class="auth-logo-orbit-core">
+              <span class="auth-logo-orbit-chip"></span>
+            </span>
+            <span class="auth-logo-orbit-ring auth-logo-orbit-ring-a"></span>
+            <span class="auth-logo-orbit-ring auth-logo-orbit-ring-b"></span>
+            <span class="auth-logo-orbit-node auth-logo-orbit-node-a"></span>
+            <span class="auth-logo-orbit-node auth-logo-orbit-node-b"></span>
+          </div>
           <p class="eyebrow">Codex Mobile</p>
-          <h1 id="authTitle">Connexion</h1>
-          <p id="authHint" class="auth-hint">Saisis le token d'accès pour ouvrir l'interface.</p>
+          <h1 class="auth-heading">Ton cockpit mobile pour Codex</h1>
+          <p class="auth-subtitle">Sessions, workspaces et exécution Codex dans une interface mobile compacte.</p>
         </div>
-        <form id="authForm" class="auth-form">
-          <label class="field">
-            <span>Token d'accès</span>
-            <input id="authTokenInput" type="password" autocomplete="current-password" placeholder="colle le token" required />
-          </label>
-          <button id="authSubmitButton" class="primary-button auth-submit" type="submit">Se connecter</button>
-        </form>
+        <div class="auth-card" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+          <div class="auth-copy">
+            <h2 id="authTitle">Connexion sécurisée</h2>
+            <p id="authHint" class="auth-hint" hidden></p>
+          </div>
+          <form id="authForm" class="auth-form">
+            <label class="field">
+              <span>Token d'accès</span>
+              <input id="authTokenInput" type="password" autocomplete="current-password" placeholder="colle le token" required />
+            </label>
+            <button id="authSubmitButton" class="primary-button auth-submit" type="submit">Se connecter</button>
+          </form>
+        </div>
       </div>
     </section>
 

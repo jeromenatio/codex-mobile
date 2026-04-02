@@ -625,29 +625,192 @@ textarea {
   display: flex;
 }
 
-.auth-card {
+.auth-shell {
   width: min(calc(100vw - 20px), 420px);
   max-width: calc(100vw - 20px);
+  display: grid;
+  gap: 14px;
+}
+
+.auth-brand {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  text-align: center;
+  padding: 6px 10px 2px;
+}
+
+.auth-logo {
+  position: relative;
+  width: 74px;
+  height: 74px;
+  display: grid;
+  place-items: center;
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.72), transparent 38%),
+    linear-gradient(145deg, color-mix(in srgb, var(--accent-soft) 78%, var(--panel)), var(--panel-strong));
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 18px 30px rgba(44, 25, 12, 0.12);
+  overflow: hidden;
+}
+
+.auth-logo-core,
+.auth-logo-ring {
+  position: absolute;
+  border-radius: 999px;
+}
+
+.auth-logo-core {
+  width: 18px;
+  height: 18px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent-soft) 55%, transparent);
+}
+
+.auth-logo-ring {
+  border: 2px solid color-mix(in srgb, var(--accent) 58%, transparent);
+  opacity: 0.88;
+}
+
+.auth-logo-ring-a {
+  width: 42px;
+  height: 42px;
+}
+
+.auth-logo-ring-b {
+  width: 58px;
+  height: 58px;
+  border-style: dashed;
+  opacity: 0.52;
+}
+
+.auth-logo-orbit {
+  border-radius: 26px;
+}
+
+.auth-logo-orbit-core,
+.auth-logo-orbit-ring,
+.auth-logo-orbit-node,
+.auth-logo-orbit-chip {
+  position: absolute;
+  inset: 0;
+}
+
+.auth-logo-orbit-core {
+  inset: 20px;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.55), transparent 34%),
+    linear-gradient(145deg, color-mix(in srgb, var(--accent-soft) 82%, var(--panel)), color-mix(in srgb, var(--panel-strong) 92%, transparent));
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 12px 20px rgba(44, 25, 12, 0.1);
+}
+
+.auth-logo-orbit-chip {
+  inset: 9px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
+  background: color-mix(in srgb, var(--panel-strong) 88%, transparent);
+}
+
+.auth-logo-orbit-chip::before,
+.auth-logo-orbit-chip::after {
+  content: "";
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-soft) 74%, transparent);
+}
+
+.auth-logo-orbit-chip::before {
+  top: 10px;
+}
+
+.auth-logo-orbit-chip::after {
+  top: 17px;
+}
+
+.auth-logo-orbit-ring {
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--accent) 34%, transparent);
+}
+
+.auth-logo-orbit-ring-a {
+  inset: 9px;
+}
+
+.auth-logo-orbit-ring-b {
+  inset: 4px;
+  border-style: dashed;
+  opacity: 0.48;
+}
+
+.auth-logo-orbit-node {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-soft) 48%, transparent);
+}
+
+.auth-logo-orbit-node-a {
+  top: 12px;
+  right: 14px;
+}
+
+.auth-logo-orbit-node-b {
+  bottom: 15px;
+  left: 12px;
+}
+
+.auth-heading {
+  margin: 0;
+  font-size: 1.35rem;
+  line-height: 1.06;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.auth-subtitle {
+  margin: 0;
+  max-width: 32ch;
+  color: var(--ink-soft);
+  line-height: 1.45;
+  font-size: 0.92rem;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 100%;
   max-height: calc(100dvh - 20px);
-  padding: 20px 16px;
+  padding: 18px 16px 16px;
   border-radius: 28px;
   background: var(--panel-strong);
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
   display: grid;
-  gap: 16px;
+  gap: 15px;
   box-sizing: border-box;
   overflow: hidden;
 }
 
 .auth-copy {
   display: grid;
-  gap: 8px;
+  gap: 6px;
+  justify-items: center;
+  text-align: center;
 }
 
-.auth-copy h1 {
+.auth-copy h2 {
   margin: 0;
-  font-size: 1.25rem;
+  font-size: 1.04rem;
 }
 
 .auth-hint {

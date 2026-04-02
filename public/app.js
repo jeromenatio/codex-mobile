@@ -442,6 +442,7 @@ function openAuthGate(message = "Saisis le token d'accès pour ouvrir l'interfac
   elements.authGate.classList.add("open");
   elements.authGate.setAttribute("aria-hidden", "false");
   elements.authHint.textContent = message;
+  elements.authHint.hidden = message === "Saisis le token d'accès pour ouvrir l'interface.";
   window.setTimeout(() => {
     elements.authTokenInput.focus();
   }, 0);
@@ -479,6 +480,7 @@ function closeAuthGate() {
   elements.authGate.classList.remove("open");
   elements.authGate.setAttribute("aria-hidden", "true");
   elements.authTokenInput.value = "";
+  elements.authHint.hidden = true;
 }
 
 async function onSubmitAuth(event) {
@@ -486,6 +488,7 @@ async function onSubmitAuth(event) {
   const token = elements.authTokenInput.value.trim();
   if (!token) {
     elements.authHint.textContent = "Le token est requis.";
+    elements.authHint.hidden = false;
     return;
   }
 
@@ -499,6 +502,7 @@ async function onSubmitAuth(event) {
 
   if (!response?.ok) {
     elements.authHint.textContent = "Token invalide.";
+    elements.authHint.hidden = false;
     return;
   }
 
