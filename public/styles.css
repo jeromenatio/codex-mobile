@@ -1633,6 +1633,95 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.bubble-attachments {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.bubble-attachment {
+  min-width: 0;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  color: inherit;
+  text-decoration: none;
+  overflow: hidden;
+}
+
+.bubble-attachment:hover,
+.bubble-attachment:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.bubble-attachment-image {
+  display: flex;
+  flex-direction: column;
+}
+
+.bubble-attachment-thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1.35 / 1;
+  object-fit: cover;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.bubble-attachment-caption {
+  display: block;
+  min-width: 0;
+  padding: 8px 10px 10px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bubble-attachment-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 70px;
+  padding: 10px 12px;
+}
+
+.bubble-attachment-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 12px;
+  flex: 0 0 auto;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.bubble-attachment-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.bubble-attachment-copy strong,
+.bubble-attachment-copy small {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bubble-attachment-copy strong {
+  font-size: 0.8rem;
+}
+
+.bubble-attachment-copy small {
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+}
+
 .loading-inline {
   display: inline-block;
   width: 0.95rem;

@@ -953,6 +953,7 @@ function renderMessages(shouldScroll = false) {
       const canRetry = message.role === "user" && message.id === latestUserMessageId;
       const roleLabel = message.role === "user" ? "Vous" : "Codex";
       const roleClass = message.role === "user" ? "user" : "assistant";
+      const attachmentsMarkup = renderMessageAttachments(message);
       return `
         <article class="bubble ${message.role} ${pending}">
           <div class="bubble-tools">
@@ -978,6 +979,7 @@ function renderMessages(shouldScroll = false) {
           <div class="bubble-body markdown-body">${renderMarkdown(body)}${
             message.pending ? '<span class="typing-dots" aria-hidden="true"><span></span><span></span><span></span></span>' : ""
           }</div>
+          ${attachmentsMarkup}
         </article>
       `;
     })
@@ -1006,6 +1008,55 @@ function renderMessages(shouldScroll = false) {
   }
 
   updateScrollDockVisibility();
+}
+
+function renderMessageAttachments(message) {
+  const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+  if (!attachments.length || !state.activeSessionId) {
+    return "";
+  }
+
+  return `
+    <div class="bubble-attachments">
+      ${attachments
+        .map((attachment) => renderMessageAttachmentCard(message.id, attachment))
+        .join("")}
+    </div>
+  `;
+}
+
+function renderMessageAttachmentCard(messageId, attachment) {
+  const safeName = escapeHtml(attachment?.name || "Pièce jointe");
+  const typeLabel = escapeHtml(formatAttachmentType(attachment?.mimeType));
+  const url = buildMessageAttachmentUrl(messageId, attachment?.id);
+
+  if (attachment?.isImage && url) {
+    return `
+      <a class="bubble-attachment bubble-attachment-image" href="${url}" target="_blank" rel="noreferrer noopener" aria-label="Ouvrir ${safeName}">
+        <img class="bubble-attachment-thumb" src="${url}" alt="${safeName}" loading="lazy" />
+        <span class="bubble-attachment-caption" title="${safeName}">${safeName}</span>
+      </a>
+    `;
+  }
+
+  return `
+    <a class="bubble-attachment bubble-attachment-file" href="${url}" target="_blank" rel="noreferrer noopener" aria-label="Ouvrir ${safeName}">
+      <span class="bubble-attachment-icon" aria-hidden="true"><i class="bi ${escapeHtml(pickAttachmentIcon(attachment?.mimeType, attachment?.name))}"></i></span>
+      <span class="bubble-attachment-copy">
+        <strong title="${safeName}">${safeName}</strong>
+        <small>${typeLabel}</small>
+      </span>
+    </a>
+  `;
+}
+
+function buildMessageAttachmentUrl(messageId, attachmentId) {
+  if (!state.activeSessionId || !messageId || !attachmentId) {
+    return "";
+  }
+  return `/api/sessions/${encodeURIComponent(state.activeSessionId)}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(
+    attachmentId
+  )}`;
 }
 
 function enhanceCodeBlocks() {

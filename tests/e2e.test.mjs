@@ -313,6 +313,9 @@ test("suite e2e exhaustive hors voix", async (t) => {
     await page.fill("#messageInput", "avec pieces jointes");
     await clickDom(page, "#sendButton");
     await expectText(page.locator(".bubble.assistant").last(), "Pièces jointes reçues: 2");
+    assert.equal(await page.locator(".bubble.user").last().locator(".bubble-attachments .bubble-attachment").count(), 2);
+    assert.equal(await page.locator(".bubble.user").last().locator(".bubble-attachment-image").count(), 1);
+    assert.equal(await page.locator(".bubble.user").last().locator(".bubble-attachment-file").count(), 1);
 
     await page.setInputFiles("#imageInput", [pngPayload("clear.png")]);
     await clickDom(page, "#clearComposerButton");

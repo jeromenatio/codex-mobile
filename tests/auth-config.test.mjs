@@ -305,6 +305,16 @@ test("auth et configuration app", async () => {
     assert.match(storedAttachment.relativePath, /^\.codex-mobile\/uploads\//);
     assert.equal(fs.existsSync(storedAttachment.path), true);
 
+    response = await fetch(
+      `${BASE_URL}/api/sessions/${created.session.id}/messages/${withFile.messages.at(-2).id}/attachments/${storedAttachment.id}`,
+      {
+        headers: { cookie },
+      }
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "text/plain; charset=utf-8");
+    assert.equal(await response.text(), "bonjour fichier");
+
     let attachmentTurnComplete = false;
     for (let attempt = 0; attempt < 20; attempt += 1) {
       response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/export`, {

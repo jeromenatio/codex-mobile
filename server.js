@@ -608,6 +608,37 @@ function registerRoutes() {
       res.status(500).json({ error: error.message || "Failed to clear attachment drafts" });
     }
   });
+
+  app.get("/api/sessions/:sessionId/messages/:messageId/attachments/:attachmentId", async (req, res) => {
+    try {
+      const session = findSession(req.params.sessionId);
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+
+      const message = session.messages.find((item) => item.id === req.params.messageId);
+      if (!message) {
+        return res.status(404).json({ error: "Message not found" });
+      }
+
+      const attachment = (Array.isArray(message.attachments) ? message.attachments : []).find(
+        (item) => item.id === req.params.attachmentId
+      );
+      if (!attachment?.path) {
+        return res.status(404).json({ error: "Attachment not found" });
+      }
+
+      await fsp.access(attachment.path, fs.constants.R_OK);
+      if (attachment.mimeType) {
+        res.type(attachment.mimeType);
+      }
+      res.setHeader("Cache-Control", "private, max-age=60");
+      return res.sendFile(path.resolve(attachment.path), { dotfiles: "allow" });
+    } catch (error) {
+      console.error("Failed to serve attachment:", error);
+      return res.status(500).json({ error: error.message || "Failed to serve attachment" });
+    }
+  });
 }
 
 function registerWebsocket() {
