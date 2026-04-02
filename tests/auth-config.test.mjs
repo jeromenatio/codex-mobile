@@ -7,11 +7,13 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import AdmZip from "adm-zip";
+import DatabaseSync from "better-sqlite3";
 
 const TMP_ROOT = await fsp.mkdtemp(path.join(os.tmpdir(), "codex-mobile-auth-"));
 const PORT = 4600 + Math.floor(Math.random() * 500);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const DATA_DIR = path.join(TMP_ROOT, "data");
+const DB_FILE = path.join(DATA_DIR, "codex-mobile.sqlite");
 const WORKSPACE_ROOT = path.join(TMP_ROOT, "workspaces");
 const CONFIG_FILE = path.join(TMP_ROOT, "codex-config.toml");
 const MODELS_CACHE_FILE = path.join(TMP_ROOT, "models-cache.json");
@@ -389,6 +391,58 @@ test("auth et configuration app", async () => {
     }
     assert.equal(firstTurnComplete, true);
 
+    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/message`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ text: "__BAD_REQUEST_ONCE__", attachments: [] }),
+    });
+    assert.equal(response.status, 200);
+
+    let badRequestRecovered = false;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/export`, {
+        headers: { cookie },
+      });
+      const snapshot = await response.json();
+      const lastMessage = snapshot.session.messages.at(-1);
+      if (lastMessage && !lastMessage.pending) {
+        assert.match(lastMessage.text, /Réponse de test: __BAD_REQUEST_ONCE__/);
+        badRequestRecovered = true;
+        break;
+      }
+      await delay(150);
+    }
+    assert.equal(badRequestRecovered, true);
+
+    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/message`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ text: "__RATE_LIMIT_ONCE__", attachments: [] }),
+    });
+    assert.equal(response.status, 200);
+
+    let rateLimitRecovered = false;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/export`, {
+        headers: { cookie },
+      });
+      const snapshot = await response.json();
+      const lastMessage = snapshot.session.messages.at(-1);
+      if (lastMessage && !lastMessage.pending) {
+        assert.match(lastMessage.text, /Réponse de test: __RATE_LIMIT_ONCE__/);
+        rateLimitRecovered = true;
+        break;
+      }
+      await delay(150);
+    }
+    assert.equal(rateLimitRecovered, true);
+
     response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/attachments`, {
       method: "POST",
       headers: {
@@ -438,6 +492,25 @@ test("auth et configuration app", async () => {
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("content-type"), "text/plain; charset=utf-8");
     assert.equal(await response.text(), "bonjour fichier");
+
+    await fsp.rm(storedAttachment.path, { force: true });
+    response = await fetch(
+      `${BASE_URL}/api/sessions/${created.session.id}/messages/${withFile.messages.at(-2).id}/attachments/${storedAttachment.id}`,
+      {
+        headers: { cookie },
+      }
+    );
+    assert.equal(response.status, 404);
+    assert.equal((await response.json()).error, "Attachment file not found");
+
+    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/export`, {
+      headers: { cookie },
+    });
+    assert.equal(response.status, 200);
+    const cleanedExport = await response.json();
+    const cleanedUserMessage = cleanedExport.session.messages.find((message) => message.id === withFile.messages.at(-2).id);
+    assert.equal(Array.isArray(cleanedUserMessage?.attachments), true);
+    assert.equal(cleanedUserMessage.attachments.length, 0);
 
     let attachmentTurnComplete = false;
     for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -573,7 +646,7 @@ test("auth et configuration app", async () => {
     assert.equal(response.status, 200);
     const retried = await response.json();
     assert.equal(Array.isArray(retried.messages), true);
-    assert.equal(retried.messages.length, 10);
+    assert.equal(retried.messages.length, 14);
     assert.equal(retried.messages.at(-2).role, "user");
     assert.equal(retried.messages.at(-2).text, "avec zip");
     assert.equal(retried.messages.at(-2).attachments.length, 1);
@@ -589,7 +662,7 @@ test("auth et configuration app", async () => {
     assert.equal(exported.session.id, created.session.id);
     assert.equal(exported.session.workspaceName, "api-suite");
     assert.equal(Array.isArray(exported.session.messages), true);
-    assert.equal(exported.session.messages.length, 10);
+    assert.equal(exported.session.messages.length, 14);
     assert.equal(exported.session.messages[0].text, "bonjour");
 
     let retryTurnComplete = false;
@@ -645,9 +718,107 @@ test("auth et configuration app", async () => {
     }
     assert.equal(completedSlowTurn, true);
 
+    const importedWorkspacePath = path.join(WORKSPACE_ROOT, "imported-suite");
+    await fsp.mkdir(importedWorkspacePath, { recursive: true });
+    const rolloutPath = path.join(importedWorkspacePath, "imported-rollout.jsonl");
+    const threadId = "thread-imported-refresh";
+    await fsp.writeFile(
+      rolloutPath,
+      [
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          payload: { type: "user_message", message: "question initiale" },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-01-01T00:00:01.000Z",
+          payload: { type: "agent_message", phase: "final_answer", message: "réponse initiale" },
+        }),
+      ].join("\n"),
+      "utf8"
+    );
+
+    {
+      const db = new DatabaseSync(DB_FILE);
+      db.prepare(`
+        INSERT INTO sessions(
+          id, name, workspace_id, workspace_name, workspace_path, workspace_root,
+          created_at, updated_at, status, thread_id, rollout_path
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        threadId,
+        "imported-suite",
+        "imported-suite",
+        "imported-suite",
+        importedWorkspacePath,
+        WORKSPACE_ROOT,
+        "2026-01-01T00:00:00.000Z",
+        "2026-01-01T00:00:01.000Z",
+        "idle",
+        threadId,
+        rolloutPath
+      );
+      db.close();
+    }
+
+    await stopServer({ preserveRuntime: true });
+    await startServer();
+
+    response = await fetch(`${BASE_URL}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: AUTH_TOKEN }),
+    });
+    assert.equal(response.status, 200);
+    const resumedCookie = response.headers.get("set-cookie");
+
+    response = await fetch(`${BASE_URL}/api/sessions/${threadId}/export`, {
+      headers: { cookie: resumedCookie },
+    });
+    assert.equal(response.status, 200);
+    let importedExport = await response.json();
+    assert.equal(importedExport.session.messages.length, 2);
+    assert.equal(importedExport.session.messages.at(-1).text, "réponse initiale");
+
+    await fsp.writeFile(
+      rolloutPath,
+      [
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          payload: { type: "user_message", message: "question initiale" },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-01-01T00:00:01.000Z",
+          payload: { type: "agent_message", phase: "final_answer", message: "réponse initiale" },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-01-01T00:00:02.000Z",
+          payload: { type: "user_message", message: "question suivante" },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-01-01T00:00:03.000Z",
+          payload: { type: "agent_message", phase: "final_answer", message: "réponse rafraîchie" },
+        }),
+      ].join("\n"),
+      "utf8"
+    );
+
+    response = await fetch(`${BASE_URL}/api/sessions/${threadId}/export`, {
+      headers: { cookie: resumedCookie },
+    });
+    assert.equal(response.status, 200);
+    importedExport = await response.json();
+    assert.equal(importedExport.session.messages.length, 4);
+    assert.equal(importedExport.session.messages.at(-1).text, "réponse rafraîchie");
+
     response = await fetch(`${BASE_URL}/api/auth/logout`, {
       method: "POST",
-      headers: { cookie },
+      headers: { cookie: resumedCookie },
     });
     assert.equal(response.status, 200);
 
@@ -765,6 +936,19 @@ async function waitForServer() {
       throw new Error("Server start timeout");
     })(),
   ]);
+
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${BASE_URL}/api/health`);
+      if (response.ok) {
+        return;
+      }
+    } catch {}
+    await delay(100);
+  }
+
+  throw new Error("Server HTTP readiness timeout");
 }
 
 function pdfDataUrl(text) {

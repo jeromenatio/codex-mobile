@@ -14,9 +14,12 @@ const PID_FILE = process.env.CODEX_MOBILE_RUNTIME_PID_FILE || path.join(DATA_DIR
 const TEST_MODE = process.env.CODEX_MOBILE_TEST_MODE === "1";
 const CODEX_HOME_DIR = process.env.CODEX_HOME || path.join(process.env.HOME || os.homedir(), ".codex");
 const CODEX_CONFIG_FILE = process.env.CODEX_MOBILE_CONFIG_FILE || path.join(CODEX_HOME_DIR, "config.toml");
+const AUTO_RETRY_TRANSIENT_ERROR_LIMIT = Math.max(0, Number(process.env.CODEX_MOBILE_TRANSIENT_ERROR_RETRY_LIMIT || 2));
+const AUTO_RETRY_TRANSIENT_ERROR_DELAY_MS = Math.max(0, Number(process.env.CODEX_MOBILE_TRANSIENT_ERROR_RETRY_DELAY_MS || 700));
 
 const runs = new Map();
 const server = http.createServer(handleRequest);
+let savePromise = Promise.resolve();
 
 boot().catch((error) => {
   console.error("Runtime boot failed:", error);
@@ -90,7 +93,10 @@ async function handleRequest(req, res) {
         updatedAt: new Date().toISOString(),
         startedAt: new Date().toISOString(),
         code: null,
+        retryCount: 0,
+        maxAutoRetries: AUTO_RETRY_TRANSIENT_ERROR_LIMIT,
         interruptRequested: false,
+        attemptStderr: [],
         process: null,
       };
 
@@ -142,25 +148,48 @@ function startRun(run) {
     stdio: ["ignore", "pipe", "pipe"],
   });
 
+  run.attemptStderr = [];
   run.process = child;
 
   const stdout = readline.createInterface({ input: child.stdout });
   const stderr = readline.createInterface({ input: child.stderr });
 
   stdout.on("line", (line) => {
+    if (run.process !== child) {
+      return;
+    }
     consumeCodexEvent(run, line);
   });
 
   stderr.on("line", (line) => {
+    if (run.process !== child) {
+      return;
+    }
     if (run.stderr.length >= 20) {
       run.stderr.shift();
     }
     run.stderr.push(line);
+    if (run.attemptStderr.length >= 20) {
+      run.attemptStderr.shift();
+    }
+    run.attemptStderr.push(line);
     run.updatedAt = new Date().toISOString();
     void saveState();
   });
 
+  child.on("error", (error) => {
+    if (run.process !== child) {
+      return;
+    }
+    run.process = null;
+    pushRunStderr(run, error.message || "Failed to start codex");
+    finalizeRun(run, { code: 1, interrupted: false });
+  });
+
   child.on("exit", (code) => {
+    if (run.process !== child) {
+      return;
+    }
     run.process = null;
     finalizeRun(run, { code, interrupted: Boolean(run.interruptRequested) });
   });
@@ -170,9 +199,20 @@ function startFakeRun(run) {
   if (!run.threadId) {
     run.threadId = `test-thread-${run.sessionId}`;
   }
+  run.attemptStderr = [];
   const delay = run.prompt.includes("__SLOW__") ? 5000 : 120;
   const timer = setTimeout(() => {
     run.process = null;
+    if (run.prompt.includes("__BAD_REQUEST_ONCE__") && run.retryCount === 0) {
+      pushRunStderr(run, '{"detail":"Bad Request"}');
+      finalizeRun(run, { code: 1, interrupted: false });
+      return;
+    }
+    if (run.prompt.includes("__RATE_LIMIT_ONCE__") && run.retryCount === 0) {
+      pushRunStderr(run, 'Error: 429 Too Many Requests');
+      finalizeRun(run, { code: 1, interrupted: false });
+      return;
+    }
     run.pendingText = buildFakeAssistantResponse(run.prompt, run.attachments);
     finalizeRun(run, { code: 0, interrupted: false });
   }, delay);
@@ -213,6 +253,15 @@ function consumeCodexEvent(run, line) {
 }
 
 function finalizeRun(run, { code = 0, interrupted = false }) {
+  if (run.status !== "running") {
+    return;
+  }
+
+  if (shouldRetryTransientError(run, { code, interrupted })) {
+    scheduleTransientRetry(run);
+    return;
+  }
+
   if (!String(run.pendingText || "").trim()) {
     run.pendingText =
       interrupted
@@ -227,7 +276,84 @@ function finalizeRun(run, { code = 0, interrupted = false }) {
   run.updatedAt = new Date().toISOString();
   run.completedAt = run.updatedAt;
   run.interruptRequested = false;
+  run.attemptStderr = [];
   void saveState();
+}
+
+function pushRunStderr(run, line) {
+  if (run.stderr.length >= 20) {
+    run.stderr.shift();
+  }
+  run.stderr.push(line);
+  if (run.attemptStderr.length >= 20) {
+    run.attemptStderr.shift();
+  }
+  run.attemptStderr.push(line);
+  run.updatedAt = new Date().toISOString();
+}
+
+function shouldRetryTransientError(run, { code = 0, interrupted = false }) {
+  if (interrupted || code === 0) {
+    return false;
+  }
+  if ((run.retryCount || 0) >= (run.maxAutoRetries || 0)) {
+    return false;
+  }
+  const attemptOutput = run.attemptStderr.join("\n");
+  return [
+    /bad request/i,
+    /\b429\b/,
+    /too many requests/i,
+    /\b5\d{2}\b/,
+    /internal server error/i,
+    /service unavailable/i,
+    /gateway timeout/i,
+    /timed? out/i,
+    /timeout/i,
+    /econnreset/i,
+    /socket hang up/i,
+    /temporary failure/i,
+    /temporarily unavailable/i,
+  ].some((pattern) => pattern.test(attemptOutput));
+}
+
+function scheduleTransientRetry(run) {
+  run.retryCount = Number(run.retryCount || 0) + 1;
+  run.code = null;
+  run.completedAt = null;
+  run.updatedAt = new Date().toISOString();
+  run.interruptRequested = false;
+  const reason = summarizeTransientError(run.attemptStderr);
+  const message = `Erreur transitoire Codex (${reason}), relance automatique ${run.retryCount}/${run.maxAutoRetries}.`;
+  pushRunStderr(run, message);
+  void saveState();
+  setTimeout(() => {
+    if (run.status !== "running" || run.process) {
+      return;
+    }
+    startRun(run);
+  }, AUTO_RETRY_TRANSIENT_ERROR_DELAY_MS);
+}
+
+function summarizeTransientError(lines = []) {
+  const text = lines.join("\n");
+  if (/bad request/i.test(text)) {
+    return "Bad Request";
+  }
+  if (/\b429\b/.test(text) || /too many requests/i.test(text)) {
+    return "429";
+  }
+  if (/\b5\d{2}\b/.test(text)) {
+    const match = text.match(/\b5\d{2}\b/);
+    return match ? match[0] : "5xx";
+  }
+  if (/timed? out/i.test(text) || /timeout/i.test(text)) {
+    return "timeout";
+  }
+  if (/econnreset/i.test(text) || /socket hang up/i.test(text)) {
+    return "connexion reinitialisee";
+  }
+  return "retryable";
 }
 
 function buildFakeAssistantResponse(prompt, attachments = []) {
@@ -429,7 +555,10 @@ async function loadState() {
         startedAt: String(entry.startedAt || entry.updatedAt || new Date().toISOString()),
         completedAt: entry.completedAt ? String(entry.completedAt) : null,
         code: typeof entry.code === "number" ? entry.code : null,
+        retryCount: Number(entry.retryCount || 0),
+        maxAutoRetries: Number(entry.maxAutoRetries || AUTO_RETRY_TRANSIENT_ERROR_LIMIT),
         interruptRequested: false,
+        attemptStderr: [],
         process: null,
       };
       if (!run.sessionId) {
@@ -452,10 +581,16 @@ async function loadState() {
 }
 
 async function saveState() {
-  const payload = {
-    runs: [...runs.values()].map(serializeRun),
-  };
-  await fsp.writeFile(STATE_FILE, JSON.stringify(payload, null, 2), "utf8");
+  const currentSave = savePromise
+    .catch(() => {})
+    .then(async () => {
+      const payload = {
+        runs: [...runs.values()].map(serializeRun),
+      };
+      await fsp.writeFile(STATE_FILE, JSON.stringify(payload, null, 2), "utf8");
+    });
+  savePromise = currentSave.catch(() => {});
+  return currentSave;
 }
 
 function serializeRun(run) {
@@ -472,6 +607,8 @@ function serializeRun(run) {
     startedAt: run.startedAt,
     completedAt: run.completedAt || null,
     code: run.code,
+    retryCount: Number(run.retryCount || 0),
+    maxAutoRetries: Number(run.maxAutoRetries || AUTO_RETRY_TRANSIENT_ERROR_LIMIT),
   };
 }
 

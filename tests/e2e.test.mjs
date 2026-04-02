@@ -507,8 +507,12 @@ async function startServer() {
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`${BASE_URL}/api/bootstrap`);
-      if (response.ok) {
+      const [bootstrapResponse, healthResponse] = await Promise.all([
+        fetch(`${BASE_URL}/api/bootstrap`),
+        fetch(`${BASE_URL}/api/health`),
+      ]);
+      const health = healthResponse.ok ? await healthResponse.json() : null;
+      if (bootstrapResponse.ok && health?.runtimeOk) {
         return;
       }
     } catch {}

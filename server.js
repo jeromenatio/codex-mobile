@@ -5,6 +5,7 @@ const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
 const http = require("http");
+const DatabaseSync = require("better-sqlite3");
 const { spawn, spawnSync } = require("child_process");
 const readline = require("readline");
 const WebSocket = require("ws");
@@ -72,6 +73,8 @@ let persistedState = database.loadState();
 let runtimeSyncTimer = null;
 let runtimeSyncInFlight = false;
 let sessionContextCache = null;
+let externalSyncTimer = null;
+let externalSyncPromise = null;
 
 boot().catch((error) => {
   console.error("Boot failed:", error);
@@ -90,18 +93,24 @@ async function boot() {
   for (const session of persistedState.sessions) {
     session.messages = Array.isArray(session.messages) ? session.messages : [];
     session.name = typeof session.name === "string" && session.name.trim() ? session.name.trim() : session.workspaceName;
+    await cleanupMissingAttachments(session);
   }
 
   await ensureRuntimeService();
   await syncRuntimeState({ boot: true });
 
   if (!DISABLE_EXTERNAL_SYNC) {
-    syncExternalCodexSessions();
+    await syncExternalCodexSessions();
   }
 
   runtimeSyncTimer = setInterval(() => {
     void syncRuntimeState();
   }, 250);
+  if (!DISABLE_EXTERNAL_SYNC) {
+    externalSyncTimer = setInterval(() => {
+      void syncExternalCodexSessions();
+    }, 5000);
+  }
 
   registerRoutes();
   registerWebsocket();
@@ -419,6 +428,7 @@ function registerRoutes() {
         return res.status(404).json({ error: "Session not found" });
       }
 
+      await cleanupMissingAttachments(session);
       await hydrateSessionMessages(session);
       res.json({
         exportedAt: new Date().toISOString(),
@@ -463,7 +473,7 @@ function registerRoutes() {
         return res.status(404).json({ error: "Session not found" });
       }
 
-      void interruptRuntimeRun(sessionId).catch(() => {});
+      await interruptRuntimeRun(sessionId).catch(() => {});
 
       const session = persistedState.sessions[sessionIndex];
       const hiddenIds = new Set(persistedState.hiddenSessionIds);
@@ -647,6 +657,13 @@ function registerRoutes() {
       res.setHeader("Cache-Control", "private, max-age=60");
       return res.sendFile(path.resolve(attachment.path), { dotfiles: "allow" });
     } catch (error) {
+      if (error?.code === "ENOENT") {
+        const session = findSession(req.params.sessionId);
+        if (session) {
+          await cleanupMissingAttachments(session);
+        }
+        return res.status(404).json({ error: "Attachment file not found" });
+      }
       console.error("Failed to serve attachment:", error);
       return res.status(500).json({ error: error.message || "Failed to serve attachment" });
     }
@@ -674,6 +691,7 @@ async function handleWebsocketConnection(socket, req) {
       return;
     }
 
+    await cleanupMissingAttachments(session);
     await hydrateSessionMessages(session);
 
     const runtime = ensureRuntimeShell(sessionId);
@@ -1302,8 +1320,6 @@ async function ensureWorkspace(label) {
 }
 
 function buildBootstrap() {
-  syncExternalCodexSessions();
-
   const sessions = persistedState.sessions
     .filter((session) => isSessionInWorkspaceRoot(session))
     .slice()
@@ -1576,6 +1592,16 @@ async function syncRuntimeState({ boot = false } = {}) {
         session.status = "interrupted";
         session.updatedAt = new Date().toISOString();
         changed = true;
+      }
+    }
+
+    const knownSessionIds = new Set(persistedState.sessions.map((session) => session.id));
+    for (const run of runs) {
+      if (knownSessionIds.has(run.sessionId)) {
+        continue;
+      }
+      if (run.status !== "running") {
+        await ackRuntimeRun(run.sessionId).catch(() => {});
       }
     }
 
@@ -2194,136 +2220,160 @@ function setNoCacheHeaders(res) {
   res.setHeader("Expires", "0");
 }
 
-function syncExternalCodexSessions() {
-  const threads = readCodexThreads(getWorkspaceRoot());
-  if (!threads.length) {
+async function syncExternalCodexSessions() {
+  if (DISABLE_EXTERNAL_SYNC) {
     return;
   }
+  if (externalSyncPromise) {
+    return externalSyncPromise;
+  }
 
-  const hiddenIds = new Set(persistedState.hiddenSessionIds || []);
-
-  for (const thread of threads) {
-    if (hiddenIds.has(thread.threadId)) {
-      continue;
+  const currentSync = Promise.resolve().then(async () => {
+    const threads = readCodexThreads(getWorkspaceRoot());
+    if (!threads.length) {
+      return;
     }
 
-    const existing = persistedState.sessions.find(
-      (session) => session.threadId === thread.threadId || session.id === thread.threadId
-    );
+    const hiddenIds = new Set(persistedState.hiddenSessionIds || []);
+    let changed = false;
 
-    if (existing) {
-      existing.workspaceId = existing.workspaceId || thread.workspaceId;
-      existing.workspaceName = existing.workspaceName || thread.workspaceName;
-      existing.workspacePath = existing.workspacePath || thread.workspacePath;
-      existing.workspaceRoot = existing.workspaceRoot || getWorkspaceRoot();
-      existing.name = existing.name || thread.name;
-      existing.createdAt = existing.createdAt || thread.createdAt;
-      existing.updatedAt = newerIso(existing.updatedAt, thread.updatedAt);
-      existing.threadId = existing.threadId || thread.threadId;
-      existing.rolloutPath = existing.rolloutPath || thread.rolloutPath;
-      existing.messages = Array.isArray(existing.messages) ? existing.messages : [];
-      continue;
+    for (const thread of threads) {
+      if (hiddenIds.has(thread.threadId)) {
+        continue;
+      }
+
+      const existing = persistedState.sessions.find(
+        (session) => session.threadId === thread.threadId || session.id === thread.threadId
+      );
+
+      if (existing) {
+        const previousSignature = JSON.stringify({
+          workspaceId: existing.workspaceId,
+          workspaceName: existing.workspaceName,
+          workspacePath: existing.workspacePath,
+          workspaceRoot: existing.workspaceRoot,
+          name: existing.name,
+          createdAt: existing.createdAt,
+          updatedAt: existing.updatedAt,
+          threadId: existing.threadId,
+          rolloutPath: existing.rolloutPath,
+        });
+        existing.workspaceId = existing.workspaceId || thread.workspaceId;
+        existing.workspaceName = existing.workspaceName || thread.workspaceName;
+        existing.workspacePath = existing.workspacePath || thread.workspacePath;
+        existing.workspaceRoot = existing.workspaceRoot || getWorkspaceRoot();
+        existing.name = existing.name || thread.name;
+        existing.createdAt = existing.createdAt || thread.createdAt;
+        existing.updatedAt = newerIso(existing.updatedAt, thread.updatedAt);
+        existing.threadId = existing.threadId || thread.threadId;
+        existing.rolloutPath = existing.rolloutPath || thread.rolloutPath;
+        existing.messages = Array.isArray(existing.messages) ? existing.messages : [];
+        const nextSignature = JSON.stringify({
+          workspaceId: existing.workspaceId,
+          workspaceName: existing.workspaceName,
+          workspacePath: existing.workspacePath,
+          workspaceRoot: existing.workspaceRoot,
+          name: existing.name,
+          createdAt: existing.createdAt,
+          updatedAt: existing.updatedAt,
+          threadId: existing.threadId,
+          rolloutPath: existing.rolloutPath,
+        });
+        if (previousSignature !== nextSignature) {
+          changed = true;
+        }
+        continue;
+      }
+
+      persistedState.sessions.push({
+        id: thread.threadId,
+        name: thread.name,
+        workspaceId: thread.workspaceId,
+        workspaceName: thread.workspaceName,
+        workspacePath: thread.workspacePath,
+        workspaceRoot: getWorkspaceRoot(),
+        createdAt: thread.createdAt,
+        updatedAt: thread.updatedAt,
+        status: "idle",
+        threadId: thread.threadId,
+        rolloutPath: thread.rolloutPath,
+        messages: [],
+        imported: true,
+      });
+      changed = true;
     }
 
-    persistedState.sessions.push({
-      id: thread.threadId,
-      name: thread.name,
-      workspaceId: thread.workspaceId,
-      workspaceName: thread.workspaceName,
-      workspacePath: thread.workspacePath,
-      workspaceRoot: getWorkspaceRoot(),
-      createdAt: thread.createdAt,
-      updatedAt: thread.updatedAt,
-      status: "idle",
-      threadId: thread.threadId,
-      rolloutPath: thread.rolloutPath,
-      messages: [],
-      imported: true,
-    });
+    if (changed) {
+      await saveState();
+    }
+  });
+
+  externalSyncPromise = currentSync;
+  try {
+    await currentSync;
+  } finally {
+    externalSyncPromise = null;
   }
 }
 
 function readCodexThreads(workspaceRoot) {
-  const script = `
-import json, sqlite3
-from pathlib import Path
-
-db = Path(${JSON.stringify(CODEX_THREADS_DB_FILE)})
-if not db.exists():
-    print("[]")
-    raise SystemExit(0)
-
-con = sqlite3.connect(str(db))
-cur = con.cursor()
-workspace_root = ${JSON.stringify(workspaceRoot)}
-rows = cur.execute(
-    "select id, cwd, title, created_at, updated_at, rollout_path from threads where archived = 0 and cwd like ? order by updated_at desc",
-    (workspace_root.rstrip("/") + "/%",)
-).fetchall()
-
-items = []
-for thread_id, cwd, title, created_at, updated_at, rollout_path in rows:
-    prefix = workspace_root.rstrip("/") + "/"
-    rel = cwd[len(prefix):]
-    if not rel:
-        continue
-    workspace = rel.split('/', 1)[0]
-    if not workspace:
-        continue
-    items.append({
-        "threadId": thread_id,
-        "workspaceId": workspace,
-        "workspaceName": workspace,
-        "workspacePath": cwd,
-        "name": title or workspace,
-        "createdAt": created_at,
-        "updatedAt": updated_at,
-        "rolloutPath": rollout_path,
-    })
-
-print(json.dumps(items))
-`;
-
-  const result = spawnSync("python3", ["-c", script], {
-    encoding: "utf8",
-  });
-
-  if (result.status !== 0 || !result.stdout.trim()) {
+  if (!fs.existsSync(CODEX_THREADS_DB_FILE)) {
     return [];
   }
 
+  let db;
   try {
-    const rows = JSON.parse(result.stdout);
-    return rows.map((row) => ({
-      threadId: row.threadId,
-      workspaceId: row.workspaceId,
-      workspaceName: row.workspaceName,
-      workspacePath: row.workspacePath,
-      name: row.name,
-      createdAt: toIso(row.createdAt),
-      updatedAt: toIso(row.updatedAt),
-      rolloutPath: row.rolloutPath,
-    }));
+    db = new DatabaseSync(CODEX_THREADS_DB_FILE, { readonly: true, fileMustExist: true });
+    const prefix = `${workspaceRoot.replace(/\/+$/, "")}/`;
+    const rows = db.prepare(`
+      SELECT id, cwd, title, created_at, updated_at, rollout_path
+      FROM threads
+      WHERE archived = 0 AND cwd LIKE ?
+      ORDER BY updated_at DESC
+    `).all(`${prefix}%`);
+    return rows.map((row) => {
+      const relative = String(row.cwd || "").startsWith(prefix) ? String(row.cwd).slice(prefix.length) : "";
+      const workspace = relative.split(path.sep)[0] || relative.split("/")[0] || "";
+      if (!workspace) {
+        return null;
+      }
+      return {
+        threadId: row.id,
+        workspaceId: workspace,
+        workspaceName: workspace,
+        workspacePath: row.cwd,
+        name: row.title || workspace,
+        createdAt: toIso(row.created_at),
+        updatedAt: toIso(row.updated_at),
+        rolloutPath: row.rollout_path,
+      };
+    }).filter(Boolean);
   } catch (error) {
-    console.error("Failed to parse external Codex threads:", error);
+    console.error("Failed to read external Codex threads:", error);
     return [];
+  } finally {
+    try {
+      db?.close();
+    } catch {}
   }
 }
 
-function toIso(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) {
-    return new Date().toISOString();
-  }
-
-  const millis = number > 10_000_000_000 ? number : number * 1000;
-  return new Date(millis).toISOString();
+function isImportedExternalSession(session) {
+  return Boolean(session?.threadId) && session.id === session.threadId;
 }
 
-function newerIso(left, right) {
-  if (!left) return right;
-  if (!right) return left;
-  return new Date(left).getTime() >= new Date(right).getTime() ? left : right;
+function areMessagesEquivalent(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+    return false;
+  }
+  return left.every((message, index) => {
+    const other = right[index];
+    return other
+      && message.role === other.role
+      && message.text === other.text
+      && Boolean(message.pending) === Boolean(other.pending)
+      && message.createdAt === other.createdAt;
+  });
 }
 
 async function hydrateSessionMessages(session) {
@@ -2331,7 +2381,7 @@ async function hydrateSessionMessages(session) {
     return;
   }
 
-  if (Array.isArray(session.messages) && session.messages.length > 0) {
+  if (Array.isArray(session.messages) && session.messages.length > 0 && !isImportedExternalSession(session)) {
     return;
   }
 
@@ -2378,34 +2428,124 @@ async function hydrateSessionMessages(session) {
     }
   }
 
+  if (areMessagesEquivalent(session.messages, messages)) {
+    return;
+  }
+
   session.messages = messages;
   await saveState();
 }
 
-function lookupRolloutPath(threadId) {
-  const script = `
-import sqlite3
-con = sqlite3.connect(${JSON.stringify(CODEX_THREADS_DB_FILE)})
-cur = con.cursor()
-row = cur.execute("select rollout_path from threads where id = ?", ("${threadId}",)).fetchone()
-print(row[0] if row else "")
-`;
+async function cleanupMissingAttachments(session) {
+  if (!session || !Array.isArray(session.messages) || session.messages.length === 0) {
+    return false;
+  }
 
-  const result = spawnSync("python3", ["-c", script], { encoding: "utf8" });
-  if (result.status !== 0) {
+  let changed = false;
+  for (const message of session.messages) {
+    if (!Array.isArray(message.attachments) || message.attachments.length === 0) {
+      continue;
+    }
+    const sanitized = await sanitizeAttachmentsTree(message.attachments);
+    if (!areAttachmentsEquivalent(message.attachments, sanitized)) {
+      message.attachments = sanitized;
+      changed = true;
+    }
+  }
+
+  if (!changed) {
+    return false;
+  }
+
+  session.updatedAt = new Date().toISOString();
+  await saveState();
+  return true;
+}
+
+async function sanitizeAttachmentsTree(attachments) {
+  const sanitized = [];
+  for (const attachment of Array.isArray(attachments) ? attachments : []) {
+    const next = await sanitizeSingleAttachment(attachment);
+    if (next) {
+      sanitized.push(next);
+    }
+  }
+  return sanitized;
+}
+
+async function sanitizeSingleAttachment(attachment) {
+  if (!attachment || typeof attachment !== "object") {
+    return null;
+  }
+
+  if (attachment.path) {
+    const exists = await fsp.access(attachment.path, fs.constants.R_OK).then(() => true).catch(() => false);
+    if (!exists) {
+      return null;
+    }
+  }
+
+  const next = { ...attachment };
+  if (Array.isArray(attachment.extractedImages)) {
+    next.extractedImages = await sanitizeAttachmentsTree(attachment.extractedImages);
+  }
+  if (Array.isArray(attachment.extractedEntries)) {
+    next.extractedEntries = await sanitizeAttachmentsTree(attachment.extractedEntries);
+  }
+  return next;
+}
+
+function areAttachmentsEquivalent(left, right) {
+  return JSON.stringify(Array.isArray(left) ? left : []) === JSON.stringify(Array.isArray(right) ? right : []);
+}
+
+function lookupRolloutPath(threadId) {
+  if (!fs.existsSync(CODEX_THREADS_DB_FILE)) {
     return "";
   }
-  return result.stdout.trim();
+
+  let db;
+  try {
+    db = new DatabaseSync(CODEX_THREADS_DB_FILE, { readonly: true, fileMustExist: true });
+    const row = db.prepare("SELECT rollout_path FROM threads WHERE id = ?").get(threadId);
+    return String(row?.rollout_path || "").trim();
+  } catch {
+    return "";
+  } finally {
+    try {
+      db?.close();
+    } catch {}
+  }
 }
+
+function toIso(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return new Date().toISOString();
+  }
+
+  const millis = number > 10_000_000_000 ? number : number * 1000;
+  return new Date(millis).toISOString();
+}
+
+function newerIso(left, right) {
+  if (!left) return right;
+  if (!right) return left;
+  return new Date(left).getTime() >= new Date(right).getTime() ? left : right;
+}
+
 
 let savePromise = Promise.resolve();
 function saveState() {
-  savePromise = savePromise.then(async () => {
-    persistedState.uiState = normalizeUiState(persistedState.uiState);
-    persistedState.appConfig = normalizeAppConfig(persistedState.appConfig);
-    await database.saveState(persistedState);
-  });
-  return savePromise;
+  const currentSave = savePromise
+    .catch(() => {})
+    .then(async () => {
+      persistedState.uiState = normalizeUiState(persistedState.uiState);
+      persistedState.appConfig = normalizeAppConfig(persistedState.appConfig);
+      await database.saveState(persistedState);
+    });
+  savePromise = currentSave.catch(() => {});
+  return currentSave;
 }
 
 function slugify(value) {

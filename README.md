@@ -44,7 +44,9 @@ SESSION_CONTEXT.md
 Il est injecté une seule fois au premier tour d'une session pour expliquer à Codex :
 - comment sont gérées les pièces jointes
 - où elles sont stockées dans le workspace
-- quand préférer `systemd-run` pour les tâches longues ou fragiles
+- comment utiliser les secrets déjà disponibles dans `/etc/codex-mobile/.env`
+- quand préférer `systemd-run` pour les tâches longues, fragiles, ou nécessitant une intervention utilisateur en cours de route
+- comment structurer une reprise possible après attente, login, validation ou erreur transitoire
 
 ## Après installation
 
@@ -111,3 +113,24 @@ npm start
 - Les sessions et l'état local sont persistés côté serveur.
 - En mode service, l'exécution des tours Codex est portée par `codex-mobile-runtime`, séparé du serveur web `codex-mobile`.
 - Codex CLI doit être installé et connecté sur la machine pour que les sessions Codex fonctionnent.
+
+## Contexte de Session
+
+Le fichier [SESSION_CONTEXT.md](./SESSION_CONTEXT.md) est là pour rendre Codex plus fiable sur les tâches réelles du projet. Il doit surtout aider Codex à :
+
+- utiliser correctement les pièces jointes stockées dans le workspace, y compris les textes, images et dossiers extraits
+- vérifier qu'une pièce jointe existe encore avant de s'y appuyer
+- réutiliser les secrets déjà présents dans `/etc/codex-mobile/.env` avant de demander une ressaisie
+- préférer une tâche détachée via `systemd-run` si le travail est long, fragile, distant ou interrompable
+- préférer une tâche détachée si une intervention utilisateur sera probablement nécessaire en cours de tâche
+- laisser des informations de reprise claires pour suivre ou reprendre un job détaché
+- éviter d'abandonner trop vite sur une erreur transitoire d'API, de réseau ou de Codex
+
+En pratique, si tu modifies `SESSION_CONTEXT.md`, vise des règles concrètes, courtes et prescriptives. Il est plus utile d'écrire :
+
+- quoi vérifier
+- quand passer en tâche détachée
+- où chercher les secrets et pièces jointes
+- comment reprendre après interruption
+
+qu'un texte générique ou purement descriptif.
