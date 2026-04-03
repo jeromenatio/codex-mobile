@@ -1732,9 +1732,11 @@ async function syncRuntimeState({ boot = false } = {}) {
         continue;
       }
 
-      if (boot && pendingMessage && session.status === "running") {
-        pendingMessage.pending = false;
-        pendingMessage.text = pendingMessage.text?.trim() || "Réponse interrompue après rechargement du serveur.";
+      if (boot && session.status === "running") {
+        if (pendingMessage) {
+          pendingMessage.pending = false;
+          pendingMessage.text = pendingMessage.text?.trim() || "Réponse interrompue après rechargement du serveur.";
+        }
         session.status = "interrupted";
         session.updatedAt = new Date().toISOString();
         changed = true;
