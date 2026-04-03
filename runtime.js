@@ -16,14 +16,11 @@ const CODEX_HOME_DIR = process.env.CODEX_HOME || path.join(process.env.HOME || o
 const CODEX_CONFIG_FILE = process.env.CODEX_MOBILE_CONFIG_FILE || path.join(CODEX_HOME_DIR, "config.toml");
 const AUTO_RETRY_TRANSIENT_ERROR_LIMIT = Math.max(0, Number(process.env.CODEX_MOBILE_TRANSIENT_ERROR_RETRY_LIMIT || 2));
 const AUTO_RETRY_TRANSIENT_ERROR_DELAY_MS = Math.max(0, Number(process.env.CODEX_MOBILE_TRANSIENT_ERROR_RETRY_DELAY_MS || 700));
-const RUN_IDLE_TIMEOUT_MS = Math.max(0, Number(process.env.CODEX_MOBILE_RUN_IDLE_TIMEOUT_MS || 120000));
-const RUN_MAX_DURATION_MS = Math.max(0, Number(process.env.CODEX_MOBILE_RUN_MAX_DURATION_MS || 900000));
 const SUPPORTS_PROCESS_GROUPS = process.platform !== "win32";
 
 const runs = new Map();
 const server = http.createServer(handleRequest);
 let savePromise = Promise.resolve();
-let watchdogTimer = null;
 
 boot().catch((error) => {
   console.error("Runtime boot failed:", error);
@@ -39,7 +36,6 @@ async function boot() {
     server.listen(SOCKET_PATH, resolve);
   });
   await fsp.writeFile(PID_FILE, String(process.pid), "utf8");
-  startWatchdog();
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
 }
@@ -53,10 +49,6 @@ async function shutdown() {
   try {
     server.close();
   } catch {}
-  if (watchdogTimer) {
-    clearInterval(watchdogTimer);
-    watchdogTimer = null;
-  }
   await cleanupSocket();
   await fsp.rm(PID_FILE, { force: true }).catch(() => {});
   process.exit(0);
@@ -223,24 +215,6 @@ function startFakeRun(run) {
     run.threadId = `test-thread-${run.sessionId}`;
   }
   run.attemptStderr = [];
-  if (run.prompt.includes("__STALL__")) {
-    if (RUN_IDLE_TIMEOUT_MS > 0) {
-      run.lastActivityAt = new Date(Date.now() - RUN_IDLE_TIMEOUT_MS - 1000).toISOString();
-    }
-    run.process = {
-      kill() {
-        if (!run.process) {
-          return;
-        }
-        run.process = null;
-        run.processPid = null;
-        if (run.status === "running") {
-          finalizeRun(run, { code: 0, interrupted: Boolean(run.interruptRequested), allowRetry: false });
-        }
-      },
-    };
-    return;
-  }
   const delay = run.prompt.includes("__SLOW__") ? 5000 : 120;
   const timer = setTimeout(() => {
     run.process = null;
@@ -659,46 +633,6 @@ function serializeRun(run) {
     lastActivityAt: run.lastActivityAt || run.updatedAt,
     processPid: Number.isInteger(run.processPid) ? run.processPid : null,
   };
-}
-
-function startWatchdog() {
-  if (!RUN_IDLE_TIMEOUT_MS && !RUN_MAX_DURATION_MS) {
-    return;
-  }
-  watchdogTimer = setInterval(() => {
-    const now = Date.now();
-    for (const run of runs.values()) {
-      if (run.status !== "running") {
-        continue;
-      }
-      const startedAt = Date.parse(run.startedAt || "");
-      const lastActivityAt = Date.parse(run.lastActivityAt || run.updatedAt || run.startedAt || "");
-      if (RUN_MAX_DURATION_MS > 0 && Number.isFinite(startedAt) && now - startedAt >= RUN_MAX_DURATION_MS) {
-        abortHungRun(run, "Tour Codex arrêté après dépassement de la durée maximale.");
-        continue;
-      }
-      if (RUN_IDLE_TIMEOUT_MS > 0 && Number.isFinite(lastActivityAt) && now - lastActivityAt >= RUN_IDLE_TIMEOUT_MS) {
-        abortHungRun(run, "Tour Codex arrêté après absence d'activité prolongée.");
-      }
-    }
-  }, 1000);
-  watchdogTimer.unref?.();
-}
-
-function abortHungRun(run, message) {
-  if (run.status !== "running") {
-    return;
-  }
-  if (Number.isInteger(run.processPid) && run.processPid > 0) {
-    terminateRunProcess(run, "SIGTERM");
-  } else {
-    run.process = null;
-    run.processPid = null;
-  }
-  run.interruptRequested = false;
-  run.pendingText = message;
-  pushRunStderr(run, message);
-  finalizeRun(run, { code: 124, interrupted: false, allowRetry: false });
 }
 
 function markRunActivity(run) {

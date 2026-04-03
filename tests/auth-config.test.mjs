@@ -441,7 +441,7 @@ test("auth et configuration app", async () => {
     assert.equal(response.status, 200);
 
     let badRequestRecovered = false;
-    for (let attempt = 0; attempt < 40; attempt += 1) {
+    for (let attempt = 0; attempt < 80; attempt += 1) {
       response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/export`, {
         headers: { cookie },
       });
@@ -481,33 +481,6 @@ test("auth et configuration app", async () => {
       await delay(150);
     }
     assert.equal(rateLimitRecovered, true);
-
-    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/message`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        cookie,
-      },
-      body: JSON.stringify({ text: "__STALL__", attachments: [] }),
-    });
-    assert.equal(response.status, 200);
-
-    let stalledTurnRecovered = false;
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/export`, {
-        headers: { cookie },
-      });
-      const snapshot = await response.json();
-      const lastMessage = snapshot.session.messages.at(-1);
-      if (lastMessage && !lastMessage.pending) {
-        assert.equal(snapshot.session.status, "error");
-        assert.match(lastMessage.text, /absence d'activité prolongée/i);
-        stalledTurnRecovered = true;
-        break;
-      }
-      await delay(150);
-    }
-    assert.equal(stalledTurnRecovered, true);
 
     response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/attachments`, {
       method: "POST",
@@ -712,7 +685,7 @@ test("auth et configuration app", async () => {
     assert.equal(response.status, 200);
     const retried = await response.json();
     assert.equal(Array.isArray(retried.messages), true);
-    assert.equal(retried.messages.length, 16);
+    assert.equal(retried.messages.length, 14);
     assert.equal(retried.messages.at(-2).role, "user");
     assert.equal(retried.messages.at(-2).text, "avec zip");
     assert.equal(retried.messages.at(-2).attachments.length, 1);
@@ -728,7 +701,7 @@ test("auth et configuration app", async () => {
     assert.equal(exported.session.id, created.session.id);
     assert.equal(exported.session.workspaceName, "api-suite");
     assert.equal(Array.isArray(exported.session.messages), true);
-    assert.equal(exported.session.messages.length, 16);
+    assert.equal(exported.session.messages.length, 14);
     assert.equal(exported.session.messages[0].text, "bonjour");
 
     let retryTurnComplete = false;
