@@ -958,16 +958,6 @@ textarea {
   font-weight: 700;
 }
 
-.ghost-button.is-busy,
-.primary-button.is-busy {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  opacity: 0.94;
-  cursor: progress;
-}
-
 .sidebar {
   position: fixed;
   top: 0;
