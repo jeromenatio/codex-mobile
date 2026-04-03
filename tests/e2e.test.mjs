@@ -49,6 +49,12 @@ test("suite e2e exhaustive hors voix", async (t) => {
       await expectText(page.locator("#activeSessionName"), "alpha-suite");
       await expectText(page.locator("#activeWorkspace"), "alpha-suite");
       await expectText(page.locator("#activeMessageCount"), "0 msg");
+      await waitFor(async () => {
+        assert.equal(
+          await page.locator("#githubHealthIndicator").evaluate((node) => node.classList.contains("down")),
+          true
+        );
+      });
 
       await openSidebar(page);
       await expectText(page.locator("#sessionCount"), "1 session");

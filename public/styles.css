@@ -803,6 +803,10 @@ textarea {
   color: #1f8b4c;
 }
 
+.server-health-indicator.warn {
+  color: #d0881e;
+}
+
 .server-health-indicator.down {
   color: #b23a2d;
 }

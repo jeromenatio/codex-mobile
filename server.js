@@ -49,6 +49,7 @@ const ZIP_TOTAL_BYTES_LIMIT = 50 * 1024 * 1024;
 const TEXT_ATTACHMENT_READ_LIMIT = 60_000;
 const TEXT_ATTACHMENT_TOTAL_CONTEXT_LIMIT = 12_000;
 const RUNTIME_RESTART_GRACE_MS = Math.max(0, Number(process.env.CODEX_MOBILE_RUNTIME_RESTART_GRACE_MS || 2000));
+const GIT_STATUS_CACHE_TTL_MS = Math.max(0, Number(process.env.CODEX_MOBILE_GIT_STATUS_CACHE_TTL_MS || 1000));
 
 let pdfjsModulePromise = null;
 const pdftoppmAvailable = commandExists("pdftoppm");
@@ -78,6 +79,7 @@ let runtimeUnavailableSince = 0;
 let sessionContextCache = null;
 let externalSyncTimer = null;
 let externalSyncPromise = null;
+const workspaceGitStatusCache = new Map();
 
 boot().catch((error) => {
   console.error("Boot failed:", error);
@@ -440,6 +442,23 @@ function registerRoutes() {
     } catch (error) {
       console.error("Failed to export session:", error);
       res.status(500).json({ error: error.message || "Failed to export session" });
+    }
+  });
+
+  app.get("/api/sessions/:sessionId/git-status", async (req, res) => {
+    try {
+      const session = findSession(req.params.sessionId);
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+      res.json({
+        workspaceId: session.workspaceId,
+        workspacePath: session.workspacePath,
+        git: await getWorkspaceGitStatus(session.workspacePath),
+      });
+    } catch (error) {
+      console.error("Failed to read git status:", error);
+      res.status(500).json({ error: error.message || "Failed to read git status" });
     }
   });
 
@@ -1268,6 +1287,32 @@ function runCommand(command, args) {
   });
 }
 
+function runCommandCapture(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd || ROOT_DIR,
+      env: options.env || process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      resolve({
+        code: Number.isInteger(code) ? code : 1,
+        stdout,
+        stderr,
+      });
+    });
+  });
+}
+
 function resolveAttachmentExtension(name, mimeType) {
   const extFromName = path.extname(name || "").replace(/^\./, "").trim();
   if (extFromName) {
@@ -1368,6 +1413,103 @@ function sanitizeSession(session) {
     status: session.status,
     threadId: session.threadId || null,
     messageCount: session.messages.length,
+  };
+}
+
+async function getWorkspaceGitStatus(workspacePath) {
+  const key = String(workspacePath || "");
+  const now = Date.now();
+  const cached = workspaceGitStatusCache.get(key);
+  if (cached && now - cached.timestamp < GIT_STATUS_CACHE_TTL_MS) {
+    return cached.value;
+  }
+  const value = await computeWorkspaceGitStatus(workspacePath);
+  workspaceGitStatusCache.set(key, { timestamp: now, value });
+  return value;
+}
+
+async function computeWorkspaceGitStatus(workspacePath) {
+  const cwd = String(workspacePath || "").trim();
+  if (!cwd) {
+    return buildGitIndicatorState("down", "GitHub non configuré", "Aucun workspace actif.");
+  }
+
+  const insideWorkTree = await runCommandCapture("git", ["rev-parse", "--is-inside-work-tree"], { cwd });
+  if (insideWorkTree.code !== 0 || !/^true\s*$/i.test(insideWorkTree.stdout)) {
+    return buildGitIndicatorState("down", "GitHub non configuré", "Ce workspace n'est pas un dépôt Git.");
+  }
+
+  const remotes = await runCommandCapture("git", ["remote", "-v"], { cwd });
+  const remoteLines = remotes.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const githubRemote = remoteLines.find((line) => /github\.com/i.test(line));
+  if (!githubRemote) {
+    return buildGitIndicatorState("down", "GitHub non configuré", "Aucun remote GitHub détecté pour ce workspace.");
+  }
+
+  const status = await runCommandCapture("git", ["status", "--porcelain=2", "--branch"], { cwd });
+  if (status.code !== 0) {
+    return buildGitIndicatorState("down", "GitHub non configuré", "Impossible de lire l'état Git du workspace.");
+  }
+
+  let hasChanges = false;
+  let hasUpstream = false;
+  let branchHead = "";
+  let ahead = 0;
+  let behind = 0;
+
+  for (const line of status.stdout.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue;
+    }
+    if (!line.startsWith("#")) {
+      hasChanges = true;
+      continue;
+    }
+    if (line.startsWith("# branch.head ")) {
+      branchHead = line.slice("# branch.head ".length).trim();
+      continue;
+    }
+    if (line.startsWith("# branch.upstream ")) {
+      hasUpstream = true;
+      continue;
+    }
+    if (line.startsWith("# branch.ab ")) {
+      const match = line.match(/\+(\d+)\s+\-(\d+)/);
+      if (match) {
+        ahead = Number(match[1] || 0);
+        behind = Number(match[2] || 0);
+      }
+    }
+  }
+
+  if (!branchHead || branchHead === "(detached)") {
+    return buildGitIndicatorState("warn", "Git à finaliser", "La branche courante n'est pas prête pour un push propre.");
+  }
+  if (!hasUpstream) {
+    return buildGitIndicatorState("warn", "Push manquant", "La branche courante n'a pas encore d'upstream distant.");
+  }
+  if (hasChanges) {
+    return buildGitIndicatorState("warn", "Changements non commit", "Des fichiers du workspace ne sont pas encore commités.");
+  }
+  if (ahead > 0 || behind > 0) {
+    return buildGitIndicatorState(
+      "warn",
+      "Synchronisation Git requise",
+      `Le workspace n'est pas totalement synchronisé (ahead ${ahead}, behind ${behind}).`
+    );
+  }
+
+  return buildGitIndicatorState("ok", "GitHub à jour", "Tous les changements du workspace sont commités et poussés.");
+}
+
+function buildGitIndicatorState(level, shortLabel, detail) {
+  return {
+    level,
+    shortLabel,
+    detail,
   };
 }
 

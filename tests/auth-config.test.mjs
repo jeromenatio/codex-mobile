@@ -273,6 +273,44 @@ test("auth et configuration app", async () => {
     const created = await response.json();
     assert.equal(created.session.workspaceName, "api-suite");
 
+    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/git-status`, {
+      headers: { cookie },
+    });
+    assert.equal(response.status, 200);
+    let gitStatus = await response.json();
+    assert.equal(gitStatus.git.level, "down");
+
+    await runProcess("git", ["init"], { cwd: created.session.workspacePath });
+    await runProcess("git", ["config", "user.name", "Codex Mobile Test"], { cwd: created.session.workspacePath });
+    await runProcess("git", ["config", "user.email", "tests@example.com"], { cwd: created.session.workspacePath });
+    await fsp.writeFile(path.join(created.session.workspacePath, "README.md"), "# api-suite\n", "utf8");
+    await runProcess("git", ["add", "README.md"], { cwd: created.session.workspacePath });
+    await runProcess("git", ["commit", "-m", "Initial commit"], { cwd: created.session.workspacePath });
+    await runProcess("git", ["branch", "-M", "main"], { cwd: created.session.workspacePath });
+
+    const githubRemotePath = path.join(TMP_ROOT, "github.com-api-suite.git");
+    await runProcess("git", ["init", "--bare", githubRemotePath], { cwd: TMP_ROOT });
+    await runProcess("git", ["remote", "add", "origin", githubRemotePath], { cwd: created.session.workspacePath });
+    await runProcess("git", ["push", "-u", "origin", "main"], { cwd: created.session.workspacePath });
+    await delay(1200);
+
+    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/git-status`, {
+      headers: { cookie },
+    });
+    assert.equal(response.status, 200);
+    gitStatus = await response.json();
+    assert.equal(gitStatus.git.level, "ok");
+
+    await fsp.writeFile(path.join(created.session.workspacePath, "README.md"), "# api-suite\n\nchange local\n", "utf8");
+    await delay(1200);
+
+    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/git-status`, {
+      headers: { cookie },
+    });
+    assert.equal(response.status, 200);
+    gitStatus = await response.json();
+    assert.equal(gitStatus.git.level, "warn");
+
     response = await fetch(`${BASE_URL}/api/sessions`, {
       method: "POST",
       headers: {
@@ -1214,6 +1252,32 @@ function onceExit(child) {
     return Promise.resolve();
   }
   return new Promise((resolve) => child.once("exit", resolve));
+}
+
+function runProcess(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd || process.cwd(),
+      env: options.env || process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve({ stdout, stderr });
+        return;
+      }
+      reject(new Error(stderr.trim() || `${command} exited with code ${code}`));
+    });
+  });
 }
 
 function pdfDataUrl(text) {

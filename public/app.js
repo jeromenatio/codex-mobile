@@ -80,6 +80,9 @@ const state = {
   manualScrollLockUntil: 0,
   runtimeHealthy: null,
   runtimeDropNotifiedSessionId: null,
+  gitStatus: null,
+  gitStatusRefreshTimerId: 0,
+  gitStatusRequestToken: 0,
   socketConnectToken: 0,
   socketReconnectTimerId: 0,
   socketReconnectAttempt: 0,
@@ -110,6 +113,7 @@ const elements = {
   authHint: document.getElementById("authHint"),
   authSubmitButton: document.getElementById("authSubmitButton"),
   serverHealthIndicator: document.getElementById("serverHealthIndicator"),
+  githubHealthIndicator: document.getElementById("githubHealthIndicator"),
   openModelModal: document.getElementById("openModelModal"),
   activeModelLabel: document.getElementById("activeModelLabel"),
   logoutButton: document.getElementById("logoutButton"),
@@ -279,6 +283,7 @@ async function bootstrapApp() {
   if (targetSessionId) {
     await activateSession(targetSessionId);
   } else {
+    clearGithubIndicator();
     renderSessionList();
     renderMessages();
   }
@@ -418,6 +423,7 @@ function handleUnauthorized() {
   state.auth.authenticated = false;
   state.activeSessionId = null;
   state.messages = [];
+  clearGithubIndicator();
   openAuthGate("Session expiree. Reconnecte-toi.");
 }
 
@@ -781,6 +787,7 @@ async function activateSession(sessionId) {
   renderSessionList();
   renderMessages();
   await connectSocket(sessionId);
+  scheduleGitStatusRefresh(0);
   void persistSettings({ lastSessionId: sessionId });
 }
 
@@ -820,6 +827,7 @@ function connectSocket(sessionId) {
         upsertSessionSummary(message.session);
         updateHeader(message.session);
         renderMessages(true);
+        scheduleGitStatusRefresh(0);
         settle();
         return;
       }
@@ -829,6 +837,7 @@ function connectSocket(sessionId) {
         upsertSessionSummary(message.session);
         updateHeader(message.session);
         renderMessages(true);
+        scheduleGitStatusRefresh();
         await refreshBootstrap();
         return;
       }
@@ -838,6 +847,7 @@ function connectSocket(sessionId) {
         upsertSessionSummary(message.session);
         updateHeader(message.session);
         renderMessages(true);
+        scheduleGitStatusRefresh();
         await refreshBootstrap();
         return;
       }
@@ -846,6 +856,7 @@ function connectSocket(sessionId) {
         upsertSessionSummary(message.session);
         updateHeader(message.session);
         renderMessages(false);
+        scheduleGitStatusRefresh();
         await refreshBootstrap();
       }
     });
@@ -881,6 +892,72 @@ function disconnectSocket() {
     state.socket.close();
     state.socket = null;
   }
+}
+
+function scheduleGitStatusRefresh(delay = 180) {
+  if (state.gitStatusRefreshTimerId) {
+    window.clearTimeout(state.gitStatusRefreshTimerId);
+    state.gitStatusRefreshTimerId = 0;
+  }
+  if (!state.activeSessionId) {
+    clearGithubIndicator();
+    return;
+  }
+  state.gitStatusRefreshTimerId = window.setTimeout(() => {
+    state.gitStatusRefreshTimerId = 0;
+    void refreshGitStatus();
+  }, delay);
+}
+
+async function refreshGitStatus() {
+  const sessionId = state.activeSessionId;
+  if (!sessionId) {
+    clearGithubIndicator();
+    return;
+  }
+  const requestToken = ++state.gitStatusRequestToken;
+  try {
+    const response = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/git-status`);
+    if (!response.ok) {
+      throw new Error("git status failed");
+    }
+    const payload = await response.json();
+    if (requestToken !== state.gitStatusRequestToken || state.activeSessionId !== sessionId) {
+      return;
+    }
+    state.gitStatus = payload.git || null;
+    updateGithubIndicator(state.gitStatus);
+  } catch {
+    if (requestToken !== state.gitStatusRequestToken || state.activeSessionId !== sessionId) {
+      return;
+    }
+    updateGithubIndicator({
+      level: "down",
+      shortLabel: "Git indisponible",
+      detail: "Impossible de lire l'état Git du workspace.",
+    });
+  }
+}
+
+function clearGithubIndicator() {
+  state.gitStatus = null;
+  updateGithubIndicator(null);
+}
+
+function updateGithubIndicator(gitStatus) {
+  const indicator = elements.githubHealthIndicator;
+  indicator.classList.remove("ok", "warn", "down");
+  if (!gitStatus) {
+    indicator.classList.add("down");
+    indicator.setAttribute("title", "Aucun workspace actif");
+    indicator.setAttribute("aria-label", "Aucun workspace actif");
+    return;
+  }
+  const level = ["ok", "warn", "down"].includes(gitStatus.level) ? gitStatus.level : "down";
+  indicator.classList.add(level);
+  const label = String(gitStatus.detail || gitStatus.shortLabel || "État Git inconnu");
+  indicator.setAttribute("title", label);
+  indicator.setAttribute("aria-label", label);
 }
 
 function clearSocketReconnectTimer() {
@@ -2370,6 +2447,7 @@ async function deleteSession(sessionId) {
     await activateSession(nextSessionId);
   } else {
     updateHeader(null);
+    clearGithubIndicator();
     renderSessionList();
     renderMessages();
   }
