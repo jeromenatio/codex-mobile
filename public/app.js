@@ -531,13 +531,13 @@ async function onSubmitAuth(event) {
     return;
   }
 
-  elements.authSubmitButton.disabled = true;
-  const response = await fetch("/api/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token }),
-  }).catch(() => null);
-  elements.authSubmitButton.disabled = false;
+  const response = await withButtonBusy(elements.authSubmitButton, "Connexion...", async () =>
+    await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    }).catch(() => null)
+  );
 
   if (!response?.ok) {
     elements.authHint.textContent = "Token invalide.";
@@ -1029,12 +1029,19 @@ async function onCreateSession(event) {
   }
 
   setBusy(true);
-  const response = await apiFetch("/api/sessions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ workspace, prompt }),
-  });
-  setBusy(false);
+  const createButton = elements.createSessionForm.querySelector(".primary-button");
+  let response;
+  try {
+    response = await withButtonBusy(createButton, "Création...", async () =>
+      await apiFetch("/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace, prompt }),
+      })
+    );
+  } finally {
+    setBusy(false);
+  }
 
   if (!response.ok) {
     notify("error", "Impossible de creer la session.");
@@ -1361,6 +1368,42 @@ function setBusy(isBusy) {
   elements.clearComposerButton.disabled = isBusy;
   elements.openSttModal.disabled = isBusy;
   elements.sendButton.disabled = isBusy || !state.activeSessionId;
+}
+
+function setButtonBusy(button, isBusy, label = "En cours...") {
+  if (!button) {
+    return;
+  }
+  if (isBusy) {
+    if (!button.dataset.originalHtml) {
+      button.dataset.originalHtml = button.innerHTML;
+    }
+    if (!button.dataset.originalDisabled) {
+      button.dataset.originalDisabled = button.disabled ? "true" : "false";
+    }
+    button.disabled = true;
+    button.classList.add("is-busy");
+    button.innerHTML = `<span class="loading-inline loading-inline-sm" aria-hidden="true"></span><span>${escapeHtml(label)}</span>`;
+    return;
+  }
+  if (button.dataset.originalHtml) {
+    button.innerHTML = button.dataset.originalHtml;
+    delete button.dataset.originalHtml;
+  }
+  if (button.dataset.originalDisabled) {
+    button.disabled = button.dataset.originalDisabled === "true";
+    delete button.dataset.originalDisabled;
+  }
+  button.classList.remove("is-busy");
+}
+
+async function withButtonBusy(button, label, callback) {
+  setButtonBusy(button, true, label);
+  try {
+    return await callback();
+  } finally {
+    setButtonBusy(button, false);
+  }
 }
 
 function autoResizeMessageInput() {
@@ -2076,7 +2119,7 @@ function requestDeletePrompt(promptId) {
   });
 }
 
-function deletePrompt(promptId) {
+async function deletePrompt(promptId) {
   const prompt = (state.settings.prompts || []).find((item) => item.id === promptId);
   if (!prompt) {
     notify("error", "Prompt introuvable.");
@@ -2087,13 +2130,13 @@ function deletePrompt(promptId) {
   if (state.editingPromptId === promptId) {
     resetPromptForm();
   }
-  persistSettings();
+  await persistSettings();
   renderPromptList();
   notify("success", "Prompt supprimé.");
   return true;
 }
 
-function onSavePrompt(event) {
+async function onSavePrompt(event) {
   event.preventDefault();
   const name = elements.promptNameInput.value.trim();
   const text = elements.promptTextInput.value.trim();
@@ -2118,7 +2161,9 @@ function onSavePrompt(event) {
   }
 
   state.settings.prompts = prompts;
-  persistSettings();
+  await withButtonBusy(elements.savePromptButton, state.editingPromptId ? "Mise à jour..." : "Enregistrement...", async () => {
+    await persistSettings();
+  });
   renderPromptList();
   resetPromptForm();
   closePromptEditorModal();
@@ -2322,8 +2367,10 @@ async function confirmModelChange() {
   if (!slug) {
     return;
   }
-  closeConfirmModelModal();
-  await applyModelChange(slug);
+  await withButtonBusy(elements.confirmModelChangeButton, "Changement...", async () => {
+    closeConfirmModelModal();
+    await applyModelChange(slug);
+  });
 }
 
 async function applyModelChange(slug) {
@@ -2396,11 +2443,14 @@ async function onRenameSession(event) {
     return;
   }
 
-  const response = await apiFetch(`/api/sessions/${encodeURIComponent(state.pendingRenameSessionId)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: nextName }),
-  });
+  const saveButton = elements.renameSessionForm.querySelector(".primary-button");
+  const response = await withButtonBusy(saveButton, "Renommage...", async () =>
+    await apiFetch(`/api/sessions/${encodeURIComponent(state.pendingRenameSessionId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: nextName }),
+    })
+  );
 
   if (!response.ok) {
     notify("error", "Renommage impossible.");
@@ -2460,7 +2510,9 @@ async function onConfirmDelete() {
   if (typeof state.pendingDeleteAction !== "function") {
     return;
   }
-  const completed = await state.pendingDeleteAction();
+  const completed = await withButtonBusy(elements.confirmDeleteButton, "Suppression...", async () =>
+    await state.pendingDeleteAction()
+  );
   if (completed !== false) {
     closeDeleteModal();
   }
@@ -2845,54 +2897,56 @@ async function onSaveConfig(event) {
     search: elements.searchInput.checked,
   };
 
-  const appResponse = await apiFetch("/api/config/app", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ workspaceRoot }),
-  });
+  await withButtonBusy(elements.saveConfigButton, "Enregistrement...", async () => {
+    const appResponse = await apiFetch("/api/config/app", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspaceRoot }),
+    });
 
-  if (!appResponse.ok) {
-    notify("error", "Mise a jour du dossier racine impossible.");
-    return;
-  }
+    if (!appResponse.ok) {
+      notify("error", "Mise a jour du dossier racine impossible.");
+      return;
+    }
 
-  const codexResponse = await apiFetch("/api/config/codex", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+    const codexResponse = await apiFetch("/api/config/codex", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
 
-  if (!codexResponse.ok) {
-    notify("error", "Mise a jour de la configuration Codex impossible.");
-    await refreshAppConfig();
+    if (!codexResponse.ok) {
+      notify("error", "Mise a jour de la configuration Codex impossible.");
+      await refreshAppConfig();
+      await refreshBootstrap();
+      return;
+    }
+
+    const appConfigPayload = await appResponse.json();
+    state.appConfig = {
+      workspaceRoot: appConfigPayload.workspaceRoot || "/projects",
+    };
+    state.codexConfig = await codexResponse.json();
+
+    state.settings.theme = theme;
+    state.settings.notificationDurationSeconds = seconds;
+    await persistSettings({ lastSessionId: state.activeSessionId });
+    applyTheme(theme);
     await refreshBootstrap();
-    return;
-  }
-
-  const appConfigPayload = await appResponse.json();
-  state.appConfig = {
-    workspaceRoot: appConfigPayload.workspaceRoot || "/projects",
-  };
-  state.codexConfig = await codexResponse.json();
-
-  state.settings.theme = theme;
-  state.settings.notificationDurationSeconds = seconds;
-  await persistSettings({ lastSessionId: state.activeSessionId });
-  applyTheme(theme);
-  await refreshBootstrap();
-  const targetSessionId = pickSessionId();
-  if (targetSessionId) {
-    await activateSession(targetSessionId);
-  } else {
-    disconnectSocket();
-    state.activeSessionId = null;
-    state.messages = [];
-    renderSessionList();
-    updateHeader(null);
-    renderMessages();
-  }
-  closeConfigModal();
-  notify("success", `Configuration enregistree. Notifications a ${seconds}s.`);
+    const targetSessionId = pickSessionId();
+    if (targetSessionId) {
+      await activateSession(targetSessionId);
+    } else {
+      disconnectSocket();
+      state.activeSessionId = null;
+      state.messages = [];
+      renderSessionList();
+      updateHeader(null);
+      renderMessages();
+    }
+    closeConfigModal();
+    notify("success", `Configuration enregistree. Notifications a ${seconds}s.`);
+  });
 }
 
 async function onSaveSecret(event) {
@@ -2913,11 +2967,14 @@ async function onSaveSecret(event) {
     ? `/api/secrets/${encodeURIComponent(state.editingSecretKey)}`
     : "/api/secrets";
   const method = editing ? "PATCH" : "POST";
-  const response = await apiFetch(endpoint, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ key, type, value, identifier, password }),
-  });
+  const saveButton = elements.secretEditorForm.querySelector(".primary-button");
+  const response = await withButtonBusy(saveButton, editing ? "Mise à jour..." : "Enregistrement...", async () =>
+    await apiFetch(endpoint, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, type, value, identifier, password }),
+    })
+  );
 
   if (response.status === 400) {
     notify("warning", "Secret invalide.");
