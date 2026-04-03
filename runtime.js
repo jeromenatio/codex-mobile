@@ -16,10 +16,14 @@ const CODEX_HOME_DIR = process.env.CODEX_HOME || path.join(process.env.HOME || o
 const CODEX_CONFIG_FILE = process.env.CODEX_MOBILE_CONFIG_FILE || path.join(CODEX_HOME_DIR, "config.toml");
 const AUTO_RETRY_TRANSIENT_ERROR_LIMIT = Math.max(0, Number(process.env.CODEX_MOBILE_TRANSIENT_ERROR_RETRY_LIMIT || 2));
 const AUTO_RETRY_TRANSIENT_ERROR_DELAY_MS = Math.max(0, Number(process.env.CODEX_MOBILE_TRANSIENT_ERROR_RETRY_DELAY_MS || 700));
+const RUN_IDLE_TIMEOUT_MS = Math.max(0, Number(process.env.CODEX_MOBILE_RUN_IDLE_TIMEOUT_MS || 120000));
+const RUN_MAX_DURATION_MS = Math.max(0, Number(process.env.CODEX_MOBILE_RUN_MAX_DURATION_MS || 900000));
+const SUPPORTS_PROCESS_GROUPS = process.platform !== "win32";
 
 const runs = new Map();
 const server = http.createServer(handleRequest);
 let savePromise = Promise.resolve();
+let watchdogTimer = null;
 
 boot().catch((error) => {
   console.error("Runtime boot failed:", error);
@@ -35,14 +39,24 @@ async function boot() {
     server.listen(SOCKET_PATH, resolve);
   });
   await fsp.writeFile(PID_FILE, String(process.pid), "utf8");
+  startWatchdog();
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
 }
 
 async function shutdown() {
+  for (const run of runs.values()) {
+    if (run.status === "running") {
+      terminateRunProcess(run, "SIGTERM");
+    }
+  }
   try {
     server.close();
   } catch {}
+  if (watchdogTimer) {
+    clearInterval(watchdogTimer);
+    watchdogTimer = null;
+  }
   await cleanupSocket();
   await fsp.rm(PID_FILE, { force: true }).catch(() => {});
   process.exit(0);
@@ -97,6 +111,8 @@ async function handleRequest(req, res) {
         maxAutoRetries: AUTO_RETRY_TRANSIENT_ERROR_LIMIT,
         interruptRequested: false,
         attemptStderr: [],
+        lastActivityAt: new Date().toISOString(),
+        processPid: null,
         process: null,
       };
 
@@ -114,7 +130,7 @@ async function handleRequest(req, res) {
         return sendJson(res, 409, { error: "No running turn for this session" });
       }
       run.interruptRequested = true;
-      run.process?.kill?.("SIGTERM");
+      terminateRunProcess(run, "SIGTERM");
       return sendJson(res, 200, { ok: true });
     }
 
@@ -136,6 +152,7 @@ async function handleRequest(req, res) {
 }
 
 function startRun(run) {
+  markRunActivity(run);
   if (TEST_MODE) {
     startFakeRun(run);
     return;
@@ -145,11 +162,14 @@ function startRun(run) {
   const child = spawn("codex", args, {
     cwd: run.workspacePath,
     env: process.env,
+    detached: SUPPORTS_PROCESS_GROUPS,
     stdio: ["ignore", "pipe", "pipe"],
   });
 
   run.attemptStderr = [];
   run.process = child;
+  run.processPid = Number.isInteger(child.pid) ? child.pid : null;
+  void saveState();
 
   const stdout = readline.createInterface({ input: child.stdout });
   const stderr = readline.createInterface({ input: child.stderr });
@@ -158,6 +178,7 @@ function startRun(run) {
     if (run.process !== child) {
       return;
     }
+    markRunActivity(run);
     consumeCodexEvent(run, line);
   });
 
@@ -173,7 +194,7 @@ function startRun(run) {
       run.attemptStderr.shift();
     }
     run.attemptStderr.push(line);
-    run.updatedAt = new Date().toISOString();
+    markRunActivity(run);
     void saveState();
   });
 
@@ -182,6 +203,7 @@ function startRun(run) {
       return;
     }
     run.process = null;
+    run.processPid = null;
     pushRunStderr(run, error.message || "Failed to start codex");
     finalizeRun(run, { code: 1, interrupted: false });
   });
@@ -191,6 +213,7 @@ function startRun(run) {
       return;
     }
     run.process = null;
+    run.processPid = null;
     finalizeRun(run, { code, interrupted: Boolean(run.interruptRequested) });
   });
 }
@@ -200,6 +223,24 @@ function startFakeRun(run) {
     run.threadId = `test-thread-${run.sessionId}`;
   }
   run.attemptStderr = [];
+  if (run.prompt.includes("__STALL__")) {
+    if (RUN_IDLE_TIMEOUT_MS > 0) {
+      run.lastActivityAt = new Date(Date.now() - RUN_IDLE_TIMEOUT_MS - 1000).toISOString();
+    }
+    run.process = {
+      kill() {
+        if (!run.process) {
+          return;
+        }
+        run.process = null;
+        run.processPid = null;
+        if (run.status === "running") {
+          finalizeRun(run, { code: 0, interrupted: Boolean(run.interruptRequested), allowRetry: false });
+        }
+      },
+    };
+    return;
+  }
   const delay = run.prompt.includes("__SLOW__") ? 5000 : 120;
   const timer = setTimeout(() => {
     run.process = null;
@@ -224,6 +265,7 @@ function startFakeRun(run) {
         return;
       }
       run.process = null;
+      run.processPid = null;
       run.interruptRequested = true;
       finalizeRun(run, { code: 0, interrupted: true });
     },
@@ -240,24 +282,24 @@ function consumeCodexEvent(run, line) {
 
   if (event.type === "thread.started" && event.thread_id) {
     run.threadId = String(event.thread_id);
-    run.updatedAt = new Date().toISOString();
+    markRunActivity(run);
     void saveState();
     return;
   }
 
   if (event.type === "item.completed" && event.item?.type === "agent_message") {
     run.pendingText = String(event.item.text || run.pendingText || "");
-    run.updatedAt = new Date().toISOString();
+    markRunActivity(run);
     void saveState();
   }
 }
 
-function finalizeRun(run, { code = 0, interrupted = false }) {
+function finalizeRun(run, { code = 0, interrupted = false, allowRetry = true }) {
   if (run.status !== "running") {
     return;
   }
 
-  if (shouldRetryTransientError(run, { code, interrupted })) {
+  if (allowRetry && shouldRetryTransientError(run, { code, interrupted })) {
     scheduleTransientRetry(run);
     return;
   }
@@ -277,6 +319,7 @@ function finalizeRun(run, { code = 0, interrupted = false }) {
   run.completedAt = run.updatedAt;
   run.interruptRequested = false;
   run.attemptStderr = [];
+  run.processPid = null;
   void saveState();
 }
 
@@ -289,7 +332,7 @@ function pushRunStderr(run, line) {
     run.attemptStderr.shift();
   }
   run.attemptStderr.push(line);
-  run.updatedAt = new Date().toISOString();
+  markRunActivity(run);
 }
 
 function shouldRetryTransientError(run, { code = 0, interrupted = false }) {
@@ -321,7 +364,7 @@ function scheduleTransientRetry(run) {
   run.retryCount = Number(run.retryCount || 0) + 1;
   run.code = null;
   run.completedAt = null;
-  run.updatedAt = new Date().toISOString();
+  markRunActivity(run);
   run.interruptRequested = false;
   const reason = summarizeTransientError(run.attemptStderr);
   const message = `Erreur transitoire Codex (${reason}), relance automatique ${run.retryCount}/${run.maxAutoRetries}.`;
@@ -559,16 +602,20 @@ async function loadState() {
         maxAutoRetries: Number(entry.maxAutoRetries || AUTO_RETRY_TRANSIENT_ERROR_LIMIT),
         interruptRequested: false,
         attemptStderr: [],
+        lastActivityAt: String(entry.lastActivityAt || entry.updatedAt || entry.startedAt || new Date().toISOString()),
+        processPid: Number.isInteger(entry.processPid) ? entry.processPid : null,
         process: null,
       };
       if (!run.sessionId) {
         continue;
       }
       if (run.status === "running") {
+        terminatePersistedProcess(run.processPid);
         run.status = "interrupted";
         run.pendingText = run.pendingText || "Réponse interrompue après redémarrage du runtime.";
         run.updatedAt = new Date().toISOString();
         run.completedAt = run.updatedAt;
+        run.processPid = null;
       }
       runs.set(run.sessionId, run);
     }
@@ -609,7 +656,105 @@ function serializeRun(run) {
     code: run.code,
     retryCount: Number(run.retryCount || 0),
     maxAutoRetries: Number(run.maxAutoRetries || AUTO_RETRY_TRANSIENT_ERROR_LIMIT),
+    lastActivityAt: run.lastActivityAt || run.updatedAt,
+    processPid: Number.isInteger(run.processPid) ? run.processPid : null,
   };
+}
+
+function startWatchdog() {
+  if (!RUN_IDLE_TIMEOUT_MS && !RUN_MAX_DURATION_MS) {
+    return;
+  }
+  watchdogTimer = setInterval(() => {
+    const now = Date.now();
+    for (const run of runs.values()) {
+      if (run.status !== "running") {
+        continue;
+      }
+      const startedAt = Date.parse(run.startedAt || "");
+      const lastActivityAt = Date.parse(run.lastActivityAt || run.updatedAt || run.startedAt || "");
+      if (RUN_MAX_DURATION_MS > 0 && Number.isFinite(startedAt) && now - startedAt >= RUN_MAX_DURATION_MS) {
+        abortHungRun(run, "Tour Codex arrêté après dépassement de la durée maximale.");
+        continue;
+      }
+      if (RUN_IDLE_TIMEOUT_MS > 0 && Number.isFinite(lastActivityAt) && now - lastActivityAt >= RUN_IDLE_TIMEOUT_MS) {
+        abortHungRun(run, "Tour Codex arrêté après absence d'activité prolongée.");
+      }
+    }
+  }, 1000);
+  watchdogTimer.unref?.();
+}
+
+function abortHungRun(run, message) {
+  if (run.status !== "running") {
+    return;
+  }
+  if (Number.isInteger(run.processPid) && run.processPid > 0) {
+    terminateRunProcess(run, "SIGTERM");
+  } else {
+    run.process = null;
+    run.processPid = null;
+  }
+  run.interruptRequested = false;
+  run.pendingText = message;
+  pushRunStderr(run, message);
+  finalizeRun(run, { code: 124, interrupted: false, allowRetry: false });
+}
+
+function markRunActivity(run) {
+  const now = new Date().toISOString();
+  run.updatedAt = now;
+  run.lastActivityAt = now;
+}
+
+function terminateRunProcess(run, signal = "SIGTERM") {
+  if (!run) {
+    return;
+  }
+  const processRef = run.process;
+  const pid = Number.isInteger(run.processPid) ? run.processPid : run.process?.pid;
+  if (!pid || pid <= 0) {
+    try {
+      processRef?.kill?.(signal);
+    } catch (error) {
+      if (error?.code !== "ESRCH") {
+        console.error("Failed to terminate Codex child:", error);
+      }
+    }
+    run.process = null;
+    run.processPid = null;
+    return;
+  }
+  run.process = null;
+  run.processPid = null;
+  try {
+    if (SUPPORTS_PROCESS_GROUPS) {
+      process.kill(-pid, signal);
+    } else {
+      process.kill(pid, signal);
+    }
+  } catch (error) {
+    if (error?.code !== "ESRCH") {
+      console.error("Failed to terminate Codex child:", error);
+    }
+  }
+}
+
+function terminatePersistedProcess(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return;
+  }
+  try {
+    if (SUPPORTS_PROCESS_GROUPS) {
+      process.kill(-pid, "SIGTERM");
+    } else {
+      process.kill(pid, "SIGTERM");
+    }
+  } catch (error) {
+    if (error?.code !== "ESRCH") {
+      console.error("Failed to terminate persisted Codex child:", error);
+    }
+  }
 }
 
 function sendJson(res, statusCode, payload) {

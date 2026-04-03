@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -443,6 +444,33 @@ test("auth et configuration app", async () => {
     }
     assert.equal(rateLimitRecovered, true);
 
+    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/message`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ text: "__STALL__", attachments: [] }),
+    });
+    assert.equal(response.status, 200);
+
+    let stalledTurnRecovered = false;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/export`, {
+        headers: { cookie },
+      });
+      const snapshot = await response.json();
+      const lastMessage = snapshot.session.messages.at(-1);
+      if (lastMessage && !lastMessage.pending) {
+        assert.equal(snapshot.session.status, "error");
+        assert.match(lastMessage.text, /absence d'activité prolongée/i);
+        stalledTurnRecovered = true;
+        break;
+      }
+      await delay(150);
+    }
+    assert.equal(stalledTurnRecovered, true);
+
     response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/attachments`, {
       method: "POST",
       headers: {
@@ -646,7 +674,7 @@ test("auth et configuration app", async () => {
     assert.equal(response.status, 200);
     const retried = await response.json();
     assert.equal(Array.isArray(retried.messages), true);
-    assert.equal(retried.messages.length, 14);
+    assert.equal(retried.messages.length, 16);
     assert.equal(retried.messages.at(-2).role, "user");
     assert.equal(retried.messages.at(-2).text, "avec zip");
     assert.equal(retried.messages.at(-2).attachments.length, 1);
@@ -662,7 +690,7 @@ test("auth et configuration app", async () => {
     assert.equal(exported.session.id, created.session.id);
     assert.equal(exported.session.workspaceName, "api-suite");
     assert.equal(Array.isArray(exported.session.messages), true);
-    assert.equal(exported.session.messages.length, 14);
+    assert.equal(exported.session.messages.length, 16);
     assert.equal(exported.session.messages[0].text, "bonjour");
 
     let retryTurnComplete = false;
@@ -717,6 +745,48 @@ test("auth et configuration app", async () => {
       await delay(200);
     }
     assert.equal(completedSlowTurn, true);
+
+    response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/message`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({ text: "__SLOW__", attachments: [] }),
+    });
+    assert.equal(response.status, 200);
+    await delay(250);
+
+    await stopRuntime();
+
+    let runtimeRecovered = false;
+    const recoveryDeadline = Date.now() + 10000;
+    while (Date.now() < recoveryDeadline) {
+      response = await fetch(`${BASE_URL}/api/health`);
+      const health = response.ok ? await response.json() : null;
+      if (health?.runtimeOk) {
+        runtimeRecovered = true;
+        break;
+      }
+      await delay(150);
+    }
+    assert.equal(runtimeRecovered, true);
+
+    let interruptedAfterRuntimeRestart = false;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/export`, {
+        headers: { cookie },
+      });
+      const snapshot = await response.json();
+      const lastMessage = snapshot.session.messages.at(-1);
+      if (lastMessage && !lastMessage.pending) {
+        assert.match(lastMessage.text, /après redémarrage du runtime|Réponse interrompue/i);
+        interruptedAfterRuntimeRestart = true;
+        break;
+      }
+      await delay(150);
+    }
+    assert.equal(interruptedAfterRuntimeRestart, true);
 
     const importedWorkspacePath = path.join(WORKSPACE_ROOT, "imported-suite");
     await fsp.mkdir(importedWorkspacePath, { recursive: true });
@@ -829,6 +899,128 @@ test("auth et configuration app", async () => {
   }
 }, { timeout: 30000 });
 
+test("runtime nettoie les process codex orphelins apres crash", async () => {
+  const runtimeRoot = await fsp.mkdtemp(path.join(TMP_ROOT, "runtime-orphan-"));
+  const dataDir = path.join(runtimeRoot, "data");
+  const workspacePath = path.join(runtimeRoot, "workspace");
+  const socketPath = path.join(dataDir, "runtime.sock");
+  const stateFile = path.join(dataDir, "runtime-state.json");
+  const pidFile = path.join(dataDir, "runtime.pid");
+  const childPidFile = path.join(runtimeRoot, "codex-child.pid");
+  const fakeBin = path.join(runtimeRoot, "bin");
+  const fakeCodex = path.join(fakeBin, "codex");
+
+  await fsp.mkdir(dataDir, { recursive: true });
+  await fsp.mkdir(workspacePath, { recursive: true });
+  await fsp.mkdir(fakeBin, { recursive: true });
+  await fsp.writeFile(
+    fakeCodex,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "printf '%s' \"$$\" > \"$CODEX_CHILD_PID_FILE\"",
+      "trap 'exit 0' TERM INT",
+      "while true; do sleep 1; done",
+    ].join("\n"),
+    { mode: 0o755 }
+  );
+
+  const runtimeEnv = {
+    ...process.env,
+    PATH: `${fakeBin}:${process.env.PATH || ""}`,
+    CODEX_MOBILE_DATA_DIR: dataDir,
+    CODEX_MOBILE_RUNTIME_SOCKET: socketPath,
+    CODEX_MOBILE_RUNTIME_STATE_FILE: stateFile,
+    CODEX_MOBILE_RUNTIME_PID_FILE: pidFile,
+    CODEX_MOBILE_CONFIG_FILE: CONFIG_FILE,
+    CODEX_HOME: TMP_ROOT,
+    CODEX_CHILD_PID_FILE: childPidFile,
+  };
+
+  let runtimeA = null;
+  let runtimeB = null;
+  let childPid = 0;
+
+  try {
+    runtimeA = spawn(process.execPath, ["runtime.js"], {
+      cwd: process.cwd(),
+      env: runtimeEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    await waitForRuntimeSocket(socketPath);
+
+    const started = await runtimeSocketRequest(socketPath, "POST", "/runs/start", {
+      sessionId: "orphan-session",
+      workspacePath,
+      prompt: "tour qui bloque",
+      attachments: [],
+      threadId: null,
+    });
+    assert.equal(started.statusCode, 200);
+
+    const childDeadline = Date.now() + 5000;
+    while (Date.now() < childDeadline) {
+      try {
+        childPid = Number((await fsp.readFile(childPidFile, "utf8")).trim());
+      } catch {}
+      if (childPid > 0) {
+        break;
+      }
+      await delay(100);
+    }
+    assert.equal(childPid > 0, true);
+    assert.equal(isProcessAlive(childPid), true);
+
+    runtimeA.kill("SIGKILL");
+    await onceExit(runtimeA);
+    runtimeA = null;
+
+    assert.equal(isProcessAlive(childPid), true);
+
+    runtimeB = spawn(process.execPath, ["runtime.js"], {
+      cwd: process.cwd(),
+      env: runtimeEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    await waitForRuntimeSocket(socketPath);
+
+    const cleanupDeadline = Date.now() + 5000;
+    let childCleaned = false;
+    while (Date.now() < cleanupDeadline) {
+      if (!isProcessAlive(childPid)) {
+        childCleaned = true;
+        break;
+      }
+      await delay(100);
+    }
+    assert.equal(childCleaned, true);
+
+    const runs = await runtimeSocketRequest(socketPath, "GET", "/runs");
+    assert.equal(runs.statusCode, 200);
+    assert.equal(Array.isArray(runs.body?.runs), true);
+    assert.equal(runs.body.runs[0]?.status, "interrupted");
+    assert.match(runs.body.runs[0]?.pendingText || "", /redémarrage du runtime/i);
+  } finally {
+    if (runtimeA) {
+      runtimeA.kill("SIGTERM");
+      await onceExit(runtimeA).catch(() => {});
+    }
+    if (runtimeB) {
+      runtimeB.kill("SIGTERM");
+      await onceExit(runtimeB).catch(() => {});
+    }
+    if (childPid > 0 && isProcessAlive(childPid)) {
+      try {
+        process.kill(-childPid, "SIGKILL");
+      } catch {
+        try {
+          process.kill(childPid, "SIGKILL");
+        } catch {}
+      }
+    }
+  }
+}, { timeout: 15000 });
+
 async function startServer() {
   await fsp.mkdir(DATA_DIR, { recursive: true });
   await fsp.mkdir(WORKSPACE_ROOT, { recursive: true });
@@ -866,6 +1058,7 @@ async function startServer() {
       CODEX_MOBILE_RUNTIME_SOCKET: RUNTIME_SOCKET_FILE,
       CODEX_MOBILE_RUNTIME_STATE_FILE: RUNTIME_STATE_FILE,
       CODEX_MOBILE_RUNTIME_PID_FILE: RUNTIME_PID_FILE,
+      CODEX_MOBILE_RUNTIME_RESTART_GRACE_MS: "400",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -949,6 +1142,78 @@ async function waitForServer() {
   }
 
   throw new Error("Server HTTP readiness timeout");
+}
+
+async function waitForRuntimeSocket(socketPath) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await runtimeSocketRequest(socketPath, "GET", "/health");
+      if (response.statusCode === 200) {
+        return;
+      }
+    } catch {}
+    await delay(100);
+  }
+  throw new Error("Runtime socket readiness timeout");
+}
+
+async function runtimeSocketRequest(socketPath, method, requestPath, payload) {
+  const body = payload == null ? null : Buffer.from(JSON.stringify(payload));
+  return await new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        socketPath,
+        path: requestPath,
+        method,
+        headers: body
+          ? {
+              "Content-Type": "application/json",
+              "Content-Length": String(body.length),
+            }
+          : undefined,
+      },
+      (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf8");
+          let parsed = null;
+          try {
+            parsed = text ? JSON.parse(text) : null;
+          } catch {}
+          resolve({ statusCode: response.statusCode || 500, body: parsed });
+        });
+      }
+    );
+    request.on("error", reject);
+    if (body) {
+      request.write(body);
+    }
+    request.end();
+  });
+}
+
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+function onceExit(child) {
+  if (!child) {
+    return Promise.resolve();
+  }
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => child.once("exit", resolve));
 }
 
 function pdfDataUrl(text) {

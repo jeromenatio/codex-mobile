@@ -48,6 +48,7 @@ const ZIP_ENTRY_LIMIT = 200;
 const ZIP_TOTAL_BYTES_LIMIT = 50 * 1024 * 1024;
 const TEXT_ATTACHMENT_READ_LIMIT = 60_000;
 const TEXT_ATTACHMENT_TOTAL_CONTEXT_LIMIT = 12_000;
+const RUNTIME_RESTART_GRACE_MS = Math.max(0, Number(process.env.CODEX_MOBILE_RUNTIME_RESTART_GRACE_MS || 2000));
 
 let pdfjsModulePromise = null;
 const pdftoppmAvailable = commandExists("pdftoppm");
@@ -72,6 +73,8 @@ const database = createDatabase(DB_FILE, DEFAULT_WORKSPACE_ROOT, STATE_FILE);
 let persistedState = database.loadState();
 let runtimeSyncTimer = null;
 let runtimeSyncInFlight = false;
+let runtimeRestartInFlight = false;
+let runtimeUnavailableSince = 0;
 let sessionContextCache = null;
 let externalSyncTimer = null;
 let externalSyncPromise = null;
@@ -1539,6 +1542,7 @@ async function syncRuntimeState({ boot = false } = {}) {
   runtimeSyncInFlight = true;
   try {
     const runs = await listRuntimeRuns();
+    runtimeUnavailableSince = 0;
     const runMap = new Map(runs.map((run) => [run.sessionId, run]));
     let changed = false;
 
@@ -1610,8 +1614,34 @@ async function syncRuntimeState({ boot = false } = {}) {
     }
   } catch (error) {
     console.error("Runtime sync failed:", error);
+    await handleRuntimeUnavailable();
   } finally {
     runtimeSyncInFlight = false;
+  }
+}
+
+async function handleRuntimeUnavailable() {
+  if (!hasRunningSessions()) {
+    runtimeUnavailableSince = 0;
+    return;
+  }
+  if (!runtimeUnavailableSince) {
+    runtimeUnavailableSince = Date.now();
+    return;
+  }
+  if (runtimeRestartInFlight) {
+    return;
+  }
+  if (Date.now() - runtimeUnavailableSince < RUNTIME_RESTART_GRACE_MS) {
+    return;
+  }
+  runtimeRestartInFlight = true;
+  try {
+    await ensureRuntimeService();
+  } catch (error) {
+    console.error("Runtime restart attempt failed:", error);
+  } finally {
+    runtimeRestartInFlight = false;
   }
 }
 
@@ -1642,6 +1672,10 @@ async function applyRuntimeCompletion(session, pendingMessage, run) {
     type: "status",
     session: sanitizeSession(session),
   });
+}
+
+function hasRunningSessions() {
+  return persistedState.sessions.some((session) => isSessionRunning(session));
 }
 
 function loadEnvFile(envFile) {

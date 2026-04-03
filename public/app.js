@@ -78,6 +78,12 @@ const state = {
   sessionSearchResults: null,
   sessionSearchRequestId: 0,
   manualScrollLockUntil: 0,
+  runtimeHealthy: null,
+  runtimeDropNotifiedSessionId: null,
+  socketConnectToken: 0,
+  socketReconnectTimerId: 0,
+  socketReconnectAttempt: 0,
+  socketCloseExpected: false,
   stt: {
     transcript: "",
     interim: "",
@@ -471,10 +477,35 @@ async function refreshServerHealth() {
 }
 
 function updateServerHealthIndicator(isHealthy) {
+  const previous = state.runtimeHealthy;
+  state.runtimeHealthy = isHealthy;
   elements.serverHealthIndicator.classList.toggle("ok", isHealthy);
   elements.serverHealthIndicator.classList.toggle("down", !isHealthy);
   elements.serverHealthIndicator.setAttribute("title", isHealthy ? "Serveur et runtime disponibles" : "Serveur ou runtime indisponible");
   elements.serverHealthIndicator.setAttribute("aria-label", isHealthy ? "Serveur et runtime disponibles" : "Serveur ou runtime indisponible");
+  handleRuntimeHealthTransition(previous, isHealthy);
+}
+
+function handleRuntimeHealthTransition(previous, isHealthy) {
+  if (previous === null || previous === isHealthy) {
+    return;
+  }
+  const session = getActiveSession();
+  if (!session || !isActiveSessionRunning()) {
+    if (isHealthy) {
+      state.runtimeDropNotifiedSessionId = null;
+    }
+    return;
+  }
+  if (!isHealthy) {
+    state.runtimeDropNotifiedSessionId = session.id;
+    notify("warning", "Le runtime Codex est indisponible pendant ce tour. Reconnexion et reprise si possible.");
+    return;
+  }
+  if (state.runtimeDropNotifiedSessionId === session.id) {
+    state.runtimeDropNotifiedSessionId = null;
+    notify("success", "Le runtime Codex est de nouveau disponible.");
+  }
 }
 
 function closeAuthGate() {
@@ -755,6 +786,9 @@ async function activateSession(sessionId) {
 
 function connectSocket(sessionId) {
   return new Promise((resolve) => {
+    clearSocketReconnectTimer();
+    state.socketCloseExpected = false;
+    const connectToken = ++state.socketConnectToken;
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(`${protocol}//${window.location.host}/ws?sessionId=${encodeURIComponent(sessionId)}`);
     state.socket = socket;
@@ -777,6 +811,11 @@ function connectSocket(sessionId) {
       const message = JSON.parse(event.data);
 
       if (message.type === "bootstrap") {
+        if (connectToken !== state.socketConnectToken || state.activeSessionId !== sessionId) {
+          settle();
+          return;
+        }
+        state.socketReconnectAttempt = 0;
         state.messages = message.messages || [];
         upsertSessionSummary(message.session);
         updateHeader(message.session);
@@ -817,6 +856,7 @@ function connectSocket(sessionId) {
 
     socket.addEventListener("close", async () => {
       settle();
+      const expectedClose = state.socketCloseExpected;
       if (state.socket === socket) {
         state.socket = null;
         await refreshBootstrap();
@@ -825,15 +865,82 @@ function connectSocket(sessionId) {
           updateHeader(session);
         }
       }
+      if (!expectedClose && state.activeSessionId === sessionId && shouldReconnectActiveSession()) {
+        await refreshActiveSessionSnapshot(sessionId);
+        scheduleSocketReconnect(sessionId);
+      }
     });
   });
 }
 
 function disconnectSocket() {
+  clearSocketReconnectTimer();
+  state.socketReconnectAttempt = 0;
+  state.socketCloseExpected = true;
   if (state.socket) {
     state.socket.close();
     state.socket = null;
   }
+}
+
+function clearSocketReconnectTimer() {
+  if (!state.socketReconnectTimerId) {
+    return;
+  }
+  window.clearTimeout(state.socketReconnectTimerId);
+  state.socketReconnectTimerId = 0;
+}
+
+function shouldReconnectActiveSession() {
+  if (!state.activeSessionId) {
+    return false;
+  }
+  const session = getActiveSession();
+  if (session?.status === "running") {
+    return true;
+  }
+  return state.messages.some((message) => message.role === "assistant" && message.pending);
+}
+
+function scheduleSocketReconnect(sessionId) {
+  if (state.activeSessionId !== sessionId || state.socket || !shouldReconnectActiveSession()) {
+    return;
+  }
+  clearSocketReconnectTimer();
+  state.socketReconnectAttempt += 1;
+  const delay = Math.min(5000, 400 * (2 ** Math.max(0, state.socketReconnectAttempt - 1)));
+  if (state.socketReconnectAttempt === 1) {
+    notify("warning", "Connexion temps réel perdue. Reconnexion en cours.");
+  }
+  state.socketReconnectTimerId = window.setTimeout(() => {
+    state.socketReconnectTimerId = 0;
+    if (state.activeSessionId !== sessionId || state.socket || !shouldReconnectActiveSession()) {
+      return;
+    }
+    void connectSocket(sessionId);
+  }, delay);
+}
+
+async function refreshActiveSessionSnapshot(sessionId) {
+  if (!sessionId || state.activeSessionId !== sessionId) {
+    return;
+  }
+  try {
+    const response = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/export`);
+    if (!response.ok) {
+      return;
+    }
+    const payload = await response.json();
+    if (state.activeSessionId !== sessionId) {
+      return;
+    }
+    state.messages = Array.isArray(payload.session?.messages) ? payload.session.messages : state.messages;
+    if (payload.session) {
+      upsertSessionSummary(payload.session);
+      updateHeader(payload.session);
+    }
+    renderMessages(true);
+  } catch {}
 }
 
 async function onCreateSession(event) {
@@ -2533,7 +2640,7 @@ function buildComposerStatus(session, running = Boolean(session) && isActiveSess
   let base = "Aucune session";
   if (session) {
     if (running) {
-      base = "Réponse en cours";
+      base = state.runtimeHealthy === false ? "Réponse en cours · Runtime indisponible" : "Réponse en cours";
     } else if (session.status === "interrupted") {
       base = "Interrompu";
     } else if (session.status === "error") {
