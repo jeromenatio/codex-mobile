@@ -65,6 +65,7 @@ async function handleRequest(req, res) {
     }
 
     if (req.method === "GET" && req.url === "/runs") {
+      await reconcileRuns();
       return sendJson(res, 200, {
         runs: [...runs.values()].map(serializeRun),
       });
@@ -83,6 +84,9 @@ async function handleRequest(req, res) {
       }
 
       const existing = runs.get(sessionId);
+      if (existing?.status === "running") {
+        await reconcileRun(existing);
+      }
       if (existing?.status === "running") {
         return sendJson(res, 409, { error: "Run already active" });
       }
@@ -106,6 +110,7 @@ async function handleRequest(req, res) {
         lastActivityAt: new Date().toISOString(),
         processPid: null,
         process: null,
+        retryTimer: null,
       };
 
       runs.set(sessionId, run);
@@ -123,6 +128,9 @@ async function handleRequest(req, res) {
       }
       run.interruptRequested = true;
       terminateRunProcess(run, "SIGTERM");
+      if (!hasLiveRunProcess(run)) {
+        finalizeRun(run, { code: 0, interrupted: true, allowRetry: false });
+      }
       return sendJson(res, 200, { ok: true });
     }
 
@@ -145,6 +153,10 @@ async function handleRequest(req, res) {
 
 function startRun(run) {
   markRunActivity(run);
+  if (run.retryTimer) {
+    clearTimeout(run.retryTimer);
+    run.retryTimer = null;
+  }
   if (TEST_MODE) {
     startFakeRun(run);
     return;
@@ -273,6 +285,11 @@ function finalizeRun(run, { code = 0, interrupted = false, allowRetry = true }) 
     return;
   }
 
+  if (run.retryTimer) {
+    clearTimeout(run.retryTimer);
+    run.retryTimer = null;
+  }
+
   if (allowRetry && shouldRetryTransientError(run, { code, interrupted })) {
     scheduleTransientRetry(run);
     return;
@@ -344,7 +361,8 @@ function scheduleTransientRetry(run) {
   const message = `Erreur transitoire Codex (${reason}), relance automatique ${run.retryCount}/${run.maxAutoRetries}.`;
   pushRunStderr(run, message);
   void saveState();
-  setTimeout(() => {
+  run.retryTimer = setTimeout(() => {
+    run.retryTimer = null;
     if (run.status !== "running" || run.process) {
       return;
     }
@@ -579,6 +597,7 @@ async function loadState() {
         lastActivityAt: String(entry.lastActivityAt || entry.updatedAt || entry.startedAt || new Date().toISOString()),
         processPid: Number.isInteger(entry.processPid) ? entry.processPid : null,
         process: null,
+        retryTimer: null,
       };
       if (!run.sessionId) {
         continue;
@@ -614,6 +633,27 @@ async function saveState() {
   return currentSave;
 }
 
+async function reconcileRuns() {
+  let changed = false;
+  for (const run of runs.values()) {
+    changed = (await reconcileRun(run)) || changed;
+  }
+  return changed;
+}
+
+async function reconcileRun(run) {
+  if (!run || run.status !== "running" || hasLiveRunProcess(run)) {
+    return false;
+  }
+  finalizeRun(run, {
+    code: 0,
+    interrupted: true,
+    allowRetry: false,
+  });
+  await saveState();
+  return true;
+}
+
 function serializeRun(run) {
   return {
     sessionId: run.sessionId,
@@ -641,9 +681,41 @@ function markRunActivity(run) {
   run.lastActivityAt = now;
 }
 
+function hasLiveRunProcess(run) {
+  if (!run || run.status !== "running") {
+    return false;
+  }
+  if (run.retryTimer) {
+    return true;
+  }
+  if (run.process) {
+    return true;
+  }
+  return isPidAlive(run.processPid);
+}
+
+function isPidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") {
+      return false;
+    }
+    return true;
+  }
+}
+
 function terminateRunProcess(run, signal = "SIGTERM") {
   if (!run) {
     return;
+  }
+  if (run.retryTimer) {
+    clearTimeout(run.retryTimer);
+    run.retryTimer = null;
   }
   const processRef = run.process;
   const pid = Number.isInteger(run.processPid) ? run.processPid : run.process?.pid;

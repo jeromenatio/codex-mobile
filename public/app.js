@@ -857,6 +857,13 @@ function connectSocket(sessionId) {
         updateHeader(message.session);
         renderMessages(false);
         scheduleGitStatusRefresh();
+        if (
+          message.session?.id === state.activeSessionId
+          && message.session?.status !== "running"
+          && state.messages.some((item) => item.role === "assistant" && item.pending)
+        ) {
+          void refreshActiveSessionSnapshot(message.session.id);
+        }
         await refreshBootstrap();
       }
     });
@@ -1075,7 +1082,12 @@ async function onSendMessage(event) {
       notify("error", "Interruption impossible.");
       return;
     }
+    applyLocalInterruptState(state.activeSessionId);
     notify("success", "Reponse interrompue.");
+    void refreshActiveSessionSnapshot(state.activeSessionId);
+    window.setTimeout(() => {
+      void refreshActiveSessionSnapshot(state.activeSessionId);
+    }, 350);
     return;
   }
   if (!hasDraft) {
@@ -1305,6 +1317,40 @@ function upsertSessionSummary(session) {
     ...state.bootstrap.sessions[index],
     ...session,
   };
+}
+
+function applyLocalInterruptState(sessionId) {
+  if (!sessionId || state.activeSessionId !== sessionId) {
+    return;
+  }
+
+  let changed = false;
+  state.messages = state.messages.map((message) => {
+    if (message.role !== "assistant" || !message.pending) {
+      return message;
+    }
+    changed = true;
+    return {
+      ...message,
+      pending: false,
+      text: String(message.text || "").trim() || "Réponse interrompue.",
+    };
+  });
+
+  const session = getActiveSession();
+  if (session?.id === sessionId && session.status === "running") {
+    upsertSessionSummary({
+      ...session,
+      status: "interrupted",
+    });
+    changed = true;
+  }
+
+  if (changed) {
+    const activeSession = getActiveSession();
+    updateHeader(activeSession);
+    renderMessages(true);
+  }
 }
 
 function isActiveSessionRunning() {
