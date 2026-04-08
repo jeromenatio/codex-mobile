@@ -1082,12 +1082,23 @@ async function onSendMessage(event) {
       notify("error", "Interruption impossible.");
       return;
     }
+    const payload = await response.json().catch(() => null);
     applyLocalInterruptState(state.activeSessionId);
+    if (
+      payload?.session?.id === state.activeSessionId
+      && payload.session?.status !== "running"
+      && Array.isArray(payload.messages)
+      && !payload.messages.some((message) => message.role === "assistant" && message.pending)
+    ) {
+      state.messages = payload.messages;
+      upsertSessionSummary(payload.session);
+      updateHeader(payload.session);
+      renderMessages(true);
+    }
     notify("success", "Reponse interrompue.");
-    void refreshActiveSessionSnapshot(state.activeSessionId);
     window.setTimeout(() => {
       void refreshActiveSessionSnapshot(state.activeSessionId);
-    }, 350);
+    }, 450);
     return;
   }
   if (!hasDraft) {

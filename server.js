@@ -596,7 +596,13 @@ function registerRoutes() {
       }
 
       await interruptRuntimeRun(session.id);
-      res.json({ ok: true });
+      await syncRuntimeState();
+      const updatedSession = findSession(session.id) || session;
+      res.json({
+        ok: true,
+        session: sanitizeSession(updatedSession),
+        messages: serializeSessionForExport(updatedSession).messages,
+      });
     } catch (error) {
       console.error("Failed to interrupt session:", error);
       res.status(500).json({ error: error.message || "Failed to interrupt session" });
