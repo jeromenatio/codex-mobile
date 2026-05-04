@@ -511,6 +511,10 @@ function handleRuntimeHealthTransition(previous, isHealthy) {
   if (state.runtimeDropNotifiedSessionId === session.id) {
     state.runtimeDropNotifiedSessionId = null;
     notify("success", "Le runtime Codex est de nouveau disponible.");
+    if (!state.socket) {
+      scheduleSocketReconnect(session.id);
+    }
+    void refreshActiveSessionSnapshot(session.id);
   }
 }
 

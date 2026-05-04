@@ -766,6 +766,8 @@ test("auth et configuration app", async () => {
       body: JSON.stringify({ text: "__SLOW__", attachments: [] }),
     });
     assert.equal(response.status, 200);
+    const slowRunPayload = await response.json();
+    const messageCountBeforeRuntimeRestart = slowRunPayload.messages.length;
     await delay(250);
 
     await stopRuntime();
@@ -783,7 +785,7 @@ test("auth et configuration app", async () => {
     }
     assert.equal(runtimeRecovered, true);
 
-    let interruptedAfterRuntimeRestart = false;
+    let recoveredAfterRuntimeRestart = false;
     for (let attempt = 0; attempt < 40; attempt += 1) {
       response = await fetch(`${BASE_URL}/api/sessions/${created.session.id}/export`, {
         headers: { cookie },
@@ -791,13 +793,14 @@ test("auth et configuration app", async () => {
       const snapshot = await response.json();
       const lastMessage = snapshot.session.messages.at(-1);
       if (lastMessage && !lastMessage.pending) {
-        assert.match(lastMessage.text, /après redémarrage du runtime|Réponse interrompue/i);
-        interruptedAfterRuntimeRestart = true;
+        assert.match(lastMessage.text, /Réponse de test: __SLOW__/);
+        assert.equal(snapshot.session.messages.length, messageCountBeforeRuntimeRestart);
+        recoveredAfterRuntimeRestart = true;
         break;
       }
       await delay(150);
     }
-    assert.equal(interruptedAfterRuntimeRestart, true);
+    assert.equal(recoveredAfterRuntimeRestart, true);
 
     const importedWorkspacePath = path.join(WORKSPACE_ROOT, "imported-suite");
     await fsp.mkdir(importedWorkspacePath, { recursive: true });
@@ -1009,8 +1012,7 @@ test("runtime nettoie les process codex orphelins apres crash", async () => {
     const runs = await runtimeSocketRequest(socketPath, "GET", "/runs");
     assert.equal(runs.statusCode, 200);
     assert.equal(Array.isArray(runs.body?.runs), true);
-    assert.equal(runs.body.runs[0]?.status, "interrupted");
-    assert.match(runs.body.runs[0]?.pendingText || "", /redémarrage du runtime/i);
+    assert.equal(runs.body.runs[0]?.status, "running");
   } finally {
     if (runtimeA) {
       runtimeA.kill("SIGTERM");

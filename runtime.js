@@ -16,11 +16,14 @@ const CODEX_HOME_DIR = process.env.CODEX_HOME || path.join(process.env.HOME || o
 const CODEX_CONFIG_FILE = process.env.CODEX_MOBILE_CONFIG_FILE || path.join(CODEX_HOME_DIR, "config.toml");
 const AUTO_RETRY_TRANSIENT_ERROR_LIMIT = Math.max(0, Number(process.env.CODEX_MOBILE_TRANSIENT_ERROR_RETRY_LIMIT || 2));
 const AUTO_RETRY_TRANSIENT_ERROR_DELAY_MS = Math.max(0, Number(process.env.CODEX_MOBILE_TRANSIENT_ERROR_RETRY_DELAY_MS || 700));
+const AUTO_RESUME_INTERRUPTED_RUN_LIMIT = Math.max(0, Number(process.env.CODEX_MOBILE_INTERRUPTED_RUN_RESUME_LIMIT || 2));
+const AUTO_RESUME_INTERRUPTED_RUN_DELAY_MS = Math.max(0, Number(process.env.CODEX_MOBILE_INTERRUPTED_RUN_RESUME_DELAY_MS || 500));
 const SUPPORTS_PROCESS_GROUPS = process.platform !== "win32";
 
 const runs = new Map();
 const server = http.createServer(handleRequest);
 let savePromise = Promise.resolve();
+let runtimeShuttingDown = false;
 
 boot().catch((error) => {
   console.error("Runtime boot failed:", error);
@@ -41,11 +44,14 @@ async function boot() {
 }
 
 async function shutdown() {
+  runtimeShuttingDown = true;
   for (const run of runs.values()) {
     if (run.status === "running") {
+      run.shutdownRequested = true;
       terminateRunProcess(run, "SIGTERM");
     }
   }
+  await saveState().catch(() => {});
   try {
     server.close();
   } catch {}
@@ -105,7 +111,10 @@ async function handleRequest(req, res) {
         code: null,
         retryCount: 0,
         maxAutoRetries: AUTO_RETRY_TRANSIENT_ERROR_LIMIT,
+        recoveryCount: 0,
+        maxAutoRecoveries: AUTO_RESUME_INTERRUPTED_RUN_LIMIT,
         interruptRequested: false,
+        shutdownRequested: false,
         attemptStderr: [],
         lastActivityAt: new Date().toISOString(),
         processPid: null,
@@ -208,6 +217,12 @@ function startRun(run) {
     }
     run.process = null;
     run.processPid = null;
+    if (run.shutdownRequested || runtimeShuttingDown) {
+      run.shutdownRequested = false;
+      markRunActivity(run);
+      void saveState();
+      return;
+    }
     pushRunStderr(run, error.message || "Failed to start codex");
     finalizeRun(run, { code: 1, interrupted: false });
   });
@@ -218,6 +233,12 @@ function startRun(run) {
     }
     run.process = null;
     run.processPid = null;
+    if (run.shutdownRequested || runtimeShuttingDown) {
+      run.shutdownRequested = false;
+      markRunActivity(run);
+      void saveState();
+      return;
+    }
     finalizeRun(run, { code, interrupted: Boolean(run.interruptRequested) });
   });
 }
@@ -244,18 +265,24 @@ function startFakeRun(run) {
     finalizeRun(run, { code: 0, interrupted: false });
   }, delay);
 
-  run.process = {
-    kill() {
-      clearTimeout(timer);
-      if (!run.process) {
-        return;
-      }
-      run.process = null;
-      run.processPid = null;
-      run.interruptRequested = true;
-      finalizeRun(run, { code: 0, interrupted: true });
-    },
-  };
+    run.process = {
+      kill() {
+        clearTimeout(timer);
+        if (!run.process) {
+          return;
+        }
+        run.process = null;
+        run.processPid = null;
+        if (run.shutdownRequested || runtimeShuttingDown) {
+          run.shutdownRequested = false;
+          markRunActivity(run);
+          void saveState();
+          return;
+        }
+        run.interruptRequested = true;
+        finalizeRun(run, { code: 0, interrupted: true });
+      },
+    };
 }
 
 function consumeCodexEvent(run, line) {
@@ -288,6 +315,11 @@ function finalizeRun(run, { code = 0, interrupted = false, allowRetry = true }) 
   if (run.retryTimer) {
     clearTimeout(run.retryTimer);
     run.retryTimer = null;
+  }
+
+  if (allowRetry && shouldResumeInterruptedRun(run, { interrupted })) {
+    scheduleInterruptedResume(run);
+    return;
   }
 
   if (allowRetry && shouldRetryTransientError(run, { code, interrupted })) {
@@ -368,6 +400,37 @@ function scheduleTransientRetry(run) {
     }
     startRun(run);
   }, AUTO_RETRY_TRANSIENT_ERROR_DELAY_MS);
+}
+
+function shouldResumeInterruptedRun(run, { interrupted = false }) {
+  if (!interrupted || run.interruptRequested) {
+    return false;
+  }
+  return Number(run.recoveryCount || 0) < Number(run.maxAutoRecoveries || 0);
+}
+
+function scheduleInterruptedResume(run, { delayMs = AUTO_RESUME_INTERRUPTED_RUN_DELAY_MS, reason = "" } = {}) {
+  run.recoveryCount = Number(run.recoveryCount || 0) + 1;
+  run.code = null;
+  run.completedAt = null;
+  run.interruptRequested = false;
+  run.process = null;
+  run.processPid = null;
+  run.attemptStderr = [];
+  markRunActivity(run);
+  const suffix = reason ? ` après ${reason}` : "";
+  pushRunStderr(
+    run,
+    `Interruption involontaire${suffix}, relance automatique ${run.recoveryCount}/${run.maxAutoRecoveries}.`
+  );
+  void saveState();
+  run.retryTimer = setTimeout(() => {
+    run.retryTimer = null;
+    if (run.status !== "running" || run.process) {
+      return;
+    }
+    startRun(run);
+  }, Math.max(0, delayMs));
 }
 
 function summarizeTransientError(lines = []) {
@@ -592,7 +655,10 @@ async function loadState() {
         code: typeof entry.code === "number" ? entry.code : null,
         retryCount: Number(entry.retryCount || 0),
         maxAutoRetries: Number(entry.maxAutoRetries || AUTO_RETRY_TRANSIENT_ERROR_LIMIT),
+        recoveryCount: Number(entry.recoveryCount || 0),
+        maxAutoRecoveries: Number(entry.maxAutoRecoveries || AUTO_RESUME_INTERRUPTED_RUN_LIMIT),
         interruptRequested: false,
+        shutdownRequested: false,
         attemptStderr: [],
         lastActivityAt: String(entry.lastActivityAt || entry.updatedAt || entry.startedAt || new Date().toISOString()),
         processPid: Number.isInteger(entry.processPid) ? entry.processPid : null,
@@ -602,15 +668,20 @@ async function loadState() {
       if (!run.sessionId) {
         continue;
       }
+      runs.set(run.sessionId, run);
       if (run.status === "running") {
         terminatePersistedProcess(run.processPid);
-        run.status = "interrupted";
-        run.pendingText = run.pendingText || "Réponse interrompue après redémarrage du runtime.";
-        run.updatedAt = new Date().toISOString();
-        run.completedAt = run.updatedAt;
         run.processPid = null;
+        run.process = null;
+        if (run.recoveryCount < run.maxAutoRecoveries) {
+          scheduleInterruptedResume(run, { delayMs: 0, reason: "redémarrage du runtime" });
+        } else {
+          run.status = "interrupted";
+          run.pendingText = run.pendingText || "Réponse interrompue après redémarrage du runtime.";
+          run.updatedAt = new Date().toISOString();
+          run.completedAt = run.updatedAt;
+        }
       }
-      runs.set(run.sessionId, run);
     }
     await saveState();
   } catch (error) {
@@ -648,7 +719,7 @@ async function reconcileRun(run) {
   finalizeRun(run, {
     code: 0,
     interrupted: true,
-    allowRetry: false,
+    allowRetry: true,
   });
   await saveState();
   return true;
@@ -670,6 +741,8 @@ function serializeRun(run) {
     code: run.code,
     retryCount: Number(run.retryCount || 0),
     maxAutoRetries: Number(run.maxAutoRetries || AUTO_RETRY_TRANSIENT_ERROR_LIMIT),
+    recoveryCount: Number(run.recoveryCount || 0),
+    maxAutoRecoveries: Number(run.maxAutoRecoveries || AUTO_RESUME_INTERRUPTED_RUN_LIMIT),
     lastActivityAt: run.lastActivityAt || run.updatedAt,
     processPid: Number.isInteger(run.processPid) ? run.processPid : null,
   };
