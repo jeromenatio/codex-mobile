@@ -57,6 +57,68 @@ test("auth et configuration app", async () => {
     assert.equal(response.status, 200);
     const initialConfig = await response.json();
     assert.equal(initialConfig.workspaceRoot, WORKSPACE_ROOT);
+    assert.equal(initialConfig.telegram.enabled, false);
+
+    response = await fetch(`${BASE_URL}/api/config/app`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({
+        workspaceRoot: WORKSPACE_ROOT,
+        telegram: {
+          enabled: true,
+          webhookSecret: "telegram-webhook-secret",
+          botTokenSecretKey: "TELEGRAM_BOT_TOKEN",
+          allowedChatIds: "123456789",
+          workspace: "telegram-test",
+        },
+      }),
+    });
+    assert.equal(response.status, 200);
+    const telegramConfig = await response.json();
+    assert.equal(telegramConfig.telegram.enabled, true);
+    assert.equal(telegramConfig.telegram.workspace, "telegram-test");
+
+    response = await fetch(`${BASE_URL}/webhooks/telegram`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Telegram-Bot-Api-Secret-Token": "telegram-webhook-secret",
+      },
+      body: JSON.stringify({
+        update_id: 1001,
+        message: {
+          message_id: 10,
+          from: {
+            id: 123456789,
+            first_name: "Alice",
+          },
+          chat: {
+            id: 123456789,
+            type: "private",
+          },
+          text: "bonjour depuis telegram",
+        },
+      }),
+    });
+    assert.equal(response.status, 200);
+
+    const outboxFile = path.join(DATA_DIR, "telegram-outbox.json");
+    let telegramReply = null;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      try {
+        const outbox = JSON.parse(await fsp.readFile(outboxFile, "utf8"));
+        telegramReply = outbox.find((item) => item.chat_id === "123456789");
+      } catch {}
+      if (telegramReply) {
+        break;
+      }
+      await delay(150);
+    }
+    assert.equal(Boolean(telegramReply), true);
+    assert.match(telegramReply.text, /bonjour depuis telegram/);
 
     response = await fetch(`${BASE_URL}/api/ui-state`, {
       headers: { cookie },
@@ -1039,7 +1101,7 @@ async function startServer() {
   await fsp.mkdir(WORKSPACE_ROOT, { recursive: true });
   await fsp.writeFile(
     ENV_FILE,
-    `CODEX_MOBILE_AUTH_TOKEN=${AUTH_TOKEN}\nGITHUB_TOKEN=${INITIAL_GITHUB_TOKEN}\n`,
+    `CODEX_MOBILE_AUTH_TOKEN=${AUTH_TOKEN}\nGITHUB_TOKEN=${INITIAL_GITHUB_TOKEN}\nTELEGRAM_BOT_TOKEN=test-telegram-token\n`,
     "utf8"
   );
   await fsp.writeFile(

@@ -293,6 +293,40 @@
                 <span class="switch-ui" aria-hidden="true"></span>
                 </label>
               </section>
+              <section class="settings-group">
+                <h3>Telegram</h3>
+                <label class="switch-row">
+                  <span class="switch-copy">
+                    <strong>Activer Telegram</strong>
+                  </span>
+                  <input id="telegramEnabledInput" type="checkbox" />
+                  <span class="switch-ui" aria-hidden="true"></span>
+                </label>
+                <label class="setting-row setting-row-wide">
+                  <span class="switch-copy">
+                    <strong>Webhook secret</strong>
+                  </span>
+                  <input id="telegramWebhookSecretInput" class="setting-input setting-input-wide" name="telegramWebhookSecret" type="text" />
+                </label>
+                <label class="setting-row setting-row-wide">
+                  <span class="switch-copy">
+                    <strong>Secret bot token</strong>
+                  </span>
+                  <input id="telegramBotTokenSecretKeyInput" class="setting-input setting-input-wide" name="telegramBotTokenSecretKey" type="text" placeholder="TELEGRAM_BOT_TOKEN" />
+                </label>
+                <label class="setting-row setting-row-wide">
+                  <span class="switch-copy">
+                    <strong>Chat IDs autorisés</strong>
+                  </span>
+                  <input id="telegramAllowedChatIdsInput" class="setting-input setting-input-wide" name="telegramAllowedChatIds" type="text" placeholder="123456789, -1001234567890" />
+                </label>
+                <label class="setting-row setting-row-wide">
+                  <span class="switch-copy">
+                    <strong>Workspace</strong>
+                  </span>
+                  <input id="telegramWorkspaceInput" class="setting-input setting-input-wide" name="telegramWorkspace" type="text" placeholder="telegram" />
+                </label>
+              </section>
             </div>
             <div class="modal-actions modal-footer">
               <button id="cancelConfigModal" class="ghost-button" type="button">Annuler</button>

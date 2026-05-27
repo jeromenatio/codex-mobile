@@ -57,6 +57,8 @@ const pdftoppmAvailable = commandExists("pdftoppm");
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: "/ws" });
+const pendingTelegramReplies = new Map();
+const processedTelegramUpdateIds = new Set();
 
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 app.use("/assets/bootstrap-icons", express.static(path.join(ROOT_DIR, "node_modules", "bootstrap-icons"), {
@@ -79,6 +81,9 @@ let runtimeUnavailableSince = 0;
 let sessionContextCache = null;
 let externalSyncTimer = null;
 let externalSyncPromise = null;
+let telegramPollTimer = null;
+let telegramPollInFlight = false;
+let telegramPollOffset = 0;
 const workspaceGitStatusCache = new Map();
 
 boot().catch((error) => {
@@ -119,6 +124,7 @@ async function boot() {
 
   registerRoutes();
   registerWebsocket();
+  restartTelegramPolling();
 
   server.listen(PORT, () => {
     console.log(`Codex Mobile listening on http://0.0.0.0:${PORT}`);
@@ -156,6 +162,20 @@ function registerRoutes() {
   app.post("/api/auth/logout", (req, res) => {
     clearAuthCookie(res);
     res.json({ ok: true });
+  });
+
+  app.post("/webhooks/telegram", async (req, res) => {
+    res.sendStatus(200);
+    try {
+      const config = getTelegramConfig();
+      const incomingSecret = String(req.get("X-Telegram-Bot-Api-Secret-Token") || "");
+      if (config.webhookSecret && incomingSecret !== config.webhookSecret) {
+        return;
+      }
+      await handleTelegramWebhook(req.body || {});
+    } catch (error) {
+      console.error("Failed to handle Telegram webhook:", error);
+    }
   });
 
   app.use("/api", (req, res, next) => {
@@ -202,6 +222,7 @@ function registerRoutes() {
   app.get("/api/config/app", (_req, res) => {
     res.json({
       workspaceRoot: getWorkspaceRoot(),
+      telegram: getTelegramConfig(),
     });
   });
 
@@ -227,13 +248,18 @@ function registerRoutes() {
     try {
       const workspaceRoot = normalizeWorkspaceRoot(req.body?.workspaceRoot);
       await fsp.mkdir(workspaceRoot, { recursive: true });
-      persistedState.appConfig = { workspaceRoot };
+      persistedState.appConfig = {
+        ...persistedState.appConfig,
+        workspaceRoot,
+        telegram: normalizeTelegramConfig(req.body?.telegram ?? persistedState.appConfig?.telegram),
+      };
       const visibleSessions = persistedState.sessions.filter((session) => isSessionInWorkspaceRoot(session));
       persistedState.lastSessionId = visibleSessions.some((session) => session.id === persistedState.lastSessionId)
         ? persistedState.lastSessionId
         : visibleSessions[0]?.id || null;
       await saveState();
-      res.json({ workspaceRoot, bootstrap: buildBootstrap() });
+      restartTelegramPolling();
+      res.json({ workspaceRoot, telegram: getTelegramConfig(), bootstrap: buildBootstrap() });
     } catch (error) {
       console.error("Failed to update app config:", error);
       res.status(500).json({ error: error.message || "Failed to update app config" });
@@ -793,7 +819,7 @@ async function appendUserMessage(session, text, attachments = []) {
   });
 }
 
-async function runSessionTurn(session, prompt, attachments = []) {
+async function runSessionTurn(session, prompt, attachments = [], options = {}) {
   const pendingMessage = {
     id: crypto.randomUUID(),
     role: "assistant",
@@ -803,6 +829,12 @@ async function runSessionTurn(session, prompt, attachments = []) {
   };
 
   session.messages.push(pendingMessage);
+  if (options.telegramReplyTo) {
+    pendingTelegramReplies.set(pendingMessage.id, {
+      chatId: options.telegramReplyTo,
+      updateId: options.telegramUpdateId || "",
+    });
+  }
   session.status = "running";
   session.updatedAt = new Date().toISOString();
   await saveState();
@@ -879,6 +911,241 @@ function loadSessionContextTemplate() {
     sessionContextCache = "";
   }
   return sessionContextCache;
+}
+
+async function handleTelegramWebhook(payload) {
+  const config = getTelegramConfig();
+  if (!config.enabled) {
+    return;
+  }
+
+  const message = extractTelegramMessage(payload);
+  if (!message || processedTelegramUpdateIds.has(message.updateId)) {
+    return;
+  }
+  processedTelegramUpdateIds.add(message.updateId);
+  trimProcessedTelegramUpdateIds();
+
+  if (!isTelegramChatAllowed(message.chatId, config.allowedChatIds)) {
+    return;
+  }
+
+  if (message.text === "/start" || message.text === "/help") {
+    await sendTelegramText(message.chatId, "Envoie un message ici et Codex Mobile répondra dans cette conversation.");
+    return;
+  }
+
+  if (!message.text) {
+    await sendTelegramText(message.chatId, "Codex Mobile ne prend en charge que les messages texte Telegram pour l'instant.");
+    return;
+  }
+
+  const session = await findOrCreateTelegramSession(message.chatId, message.displayName, config.workspace);
+  if (isSessionRunning(session)) {
+    await sendTelegramText(message.chatId, "Un tour Codex est déjà en cours pour cette conversation.");
+    return;
+  }
+
+  await appendUserMessage(session, message.text, []);
+  void runSessionTurn(session, buildSessionTurnPrompt(session, message.text), [], {
+    telegramReplyTo: message.chatId,
+    telegramUpdateId: message.updateId,
+  });
+}
+
+function extractTelegramMessage(payload) {
+  const message = payload?.message || payload?.edited_message || null;
+  const chatId = message?.chat?.id;
+  if (typeof chatId === "undefined" || chatId === null) {
+    return null;
+  }
+  const from = message?.from || {};
+  const name = [from.first_name, from.last_name].map((part) => String(part || "").trim()).filter(Boolean).join(" ");
+  return {
+    updateId: String(payload?.update_id || message?.message_id || crypto.randomUUID()),
+    chatId: String(chatId),
+    displayName: name || String(from.username || message?.chat?.username || "").trim(),
+    text: String(message?.text || "").trim(),
+  };
+}
+
+async function findOrCreateTelegramSession(chatId, displayName, workspacePrefix) {
+  const safeChatId = normalizeTelegramChatId(chatId);
+  const suffix = safeChatId.replace(/^-/, "n").slice(-8) || crypto.randomUUID().slice(0, 8);
+  const workspaceName = slugify(`${workspacePrefix || "telegram"}-${suffix}`) || `telegram-${suffix}`;
+  const existing = persistedState.sessions.find(
+    (session) => session.workspaceRoot === getWorkspaceRoot() && session.workspaceName === workspaceName
+  );
+  if (existing) {
+    return existing;
+  }
+
+  const workspace = await ensureWorkspace(workspaceName);
+  const id = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+  const safeDisplayName = String(displayName || "").trim();
+  const session = {
+    id,
+    name: safeDisplayName ? `Telegram - ${safeDisplayName}` : `Telegram - ${safeChatId}`,
+    workspaceId: workspace.id,
+    workspaceName: workspace.name,
+    workspacePath: workspace.path,
+    workspaceRoot: getWorkspaceRoot(),
+    createdAt,
+    updatedAt: createdAt,
+    status: "idle",
+    threadId: null,
+    messages: [],
+  };
+  persistedState.sessions.unshift(session);
+  persistedState.lastSessionId = id;
+  await saveState();
+  return session;
+}
+
+async function sendTelegramText(chatId, text) {
+  const config = getTelegramConfig();
+  if (!config.enabled) {
+    return;
+  }
+  const token = getSecretValue(config.botTokenSecretKey);
+  if (!token) {
+    throw new Error(`Missing Telegram bot token secret: ${config.botTokenSecretKey}`);
+  }
+  const body = {
+    chat_id: normalizeTelegramChatId(chatId),
+    text: truncateTelegramText(text),
+    disable_web_page_preview: true,
+  };
+
+  if (TEST_MODE) {
+    await appendTelegramOutbox(body);
+    return;
+  }
+
+  const response = await fetch(`https://api.telegram.org/bot${encodeURIComponent(token)}/sendMessage`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const responseText = await response.text().catch(() => "");
+    throw new Error(`Telegram send failed (${response.status}): ${responseText || response.statusText}`);
+  }
+}
+
+async function appendTelegramOutbox(message) {
+  const file = path.join(DATA_DIR, "telegram-outbox.json");
+  let messages = [];
+  try {
+    messages = JSON.parse(await fsp.readFile(file, "utf8"));
+  } catch {}
+  if (!Array.isArray(messages)) {
+    messages = [];
+  }
+  messages.push({ ...message, createdAt: new Date().toISOString() });
+  await fsp.writeFile(file, JSON.stringify(messages, null, 2), "utf8");
+}
+
+function truncateTelegramText(text) {
+  const normalized = String(text || "").trim() || "Réponse vide.";
+  return normalized.length <= 4096 ? normalized : `${normalized.slice(0, 4086).trim()}\n[tronqué]`;
+}
+
+function getSecretValue(key) {
+  const normalized = normalizeSecretKey(key);
+  if (!normalized) {
+    return "";
+  }
+  return String(process.env[normalized] || "").trim();
+}
+
+function isTelegramChatAllowed(chatId, allowedChatIds) {
+  const allowed = String(allowedChatIds || "")
+    .split(/[\s,;]+/)
+    .map(normalizeTelegramChatId)
+    .filter(Boolean);
+  return !allowed.length || allowed.includes(normalizeTelegramChatId(chatId));
+}
+
+function normalizeTelegramChatId(value) {
+  return String(value || "").trim();
+}
+
+function trimProcessedTelegramUpdateIds() {
+  if (processedTelegramUpdateIds.size <= 500) {
+    return;
+  }
+  const keep = [...processedTelegramUpdateIds].slice(-250);
+  processedTelegramUpdateIds.clear();
+  keep.forEach((id) => processedTelegramUpdateIds.add(id));
+}
+
+function restartTelegramPolling() {
+  if (telegramPollTimer) {
+    clearTimeout(telegramPollTimer);
+    telegramPollTimer = null;
+  }
+  if (TEST_MODE) {
+    return;
+  }
+  const config = getTelegramConfig();
+  if (!config.enabled || !getSecretValue(config.botTokenSecretKey)) {
+    return;
+  }
+  scheduleTelegramPoll(250);
+}
+
+function scheduleTelegramPoll(delayMs = 2000) {
+  if (telegramPollTimer) {
+    clearTimeout(telegramPollTimer);
+  }
+  telegramPollTimer = setTimeout(() => {
+    telegramPollTimer = null;
+    void pollTelegramUpdates();
+  }, delayMs);
+}
+
+async function pollTelegramUpdates() {
+  if (telegramPollInFlight) {
+    scheduleTelegramPoll();
+    return;
+  }
+  const config = getTelegramConfig();
+  const token = getSecretValue(config.botTokenSecretKey);
+  if (TEST_MODE || !config.enabled || !token) {
+    return;
+  }
+
+  telegramPollInFlight = true;
+  try {
+    const params = new URLSearchParams({
+      timeout: "0",
+      allowed_updates: JSON.stringify(["message", "edited_message"]),
+    });
+    if (telegramPollOffset > 0) {
+      params.set("offset", String(telegramPollOffset));
+    }
+    const response = await fetch(`https://api.telegram.org/bot${encodeURIComponent(token)}/getUpdates?${params.toString()}`);
+    if (!response.ok) {
+      throw new Error(`Telegram polling failed: ${response.status}`);
+    }
+    const payload = await response.json();
+    for (const update of Array.isArray(payload?.result) ? payload.result : []) {
+      const updateId = Number(update?.update_id);
+      if (Number.isFinite(updateId)) {
+        telegramPollOffset = Math.max(telegramPollOffset, updateId + 1);
+      }
+      await handleTelegramWebhook(update);
+    }
+  } catch (error) {
+    console.error("Telegram polling failed:", error);
+  } finally {
+    telegramPollInFlight = false;
+    scheduleTelegramPoll();
+  }
 }
 
 async function materializeDraftAttachments(session, attachmentsInput) {
@@ -1822,6 +2089,14 @@ async function applyRuntimeCompletion(session, pendingMessage, run) {
     type: "status",
     session: sanitizeSession(session),
   });
+
+  const telegramReply = pendingTelegramReplies.get(pendingMessage.id);
+  if (telegramReply) {
+    pendingTelegramReplies.delete(pendingMessage.id);
+    await sendTelegramText(telegramReply.chatId, pendingMessage.text).catch((error) => {
+      console.error("Failed to send Telegram reply:", error);
+    });
+  }
 }
 
 function hasRunningSessions() {
@@ -2744,6 +3019,22 @@ function slugify(value) {
 function normalizeAppConfig(config) {
   return {
     workspaceRoot: normalizeWorkspaceRoot(config?.workspaceRoot),
+    telegram: normalizeTelegramConfig(config?.telegram),
+  };
+}
+
+function getTelegramConfig() {
+  persistedState.appConfig = normalizeAppConfig(persistedState.appConfig);
+  return persistedState.appConfig.telegram;
+}
+
+function normalizeTelegramConfig(config) {
+  return {
+    enabled: Boolean(config?.enabled),
+    webhookSecret: String(config?.webhookSecret || "").trim(),
+    botTokenSecretKey: normalizeSecretKey(config?.botTokenSecretKey) || "TELEGRAM_BOT_TOKEN",
+    allowedChatIds: String(config?.allowedChatIds || "").trim(),
+    workspace: slugify(String(config?.workspace || "telegram")) || "telegram",
   };
 }
 

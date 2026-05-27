@@ -56,6 +56,7 @@ const state = {
   settings: defaultSettings(),
   appConfig: {
     workspaceRoot: "/projects",
+    telegram: defaultTelegramConfig(),
   },
   secrets: [],
   codexConfig: {
@@ -144,6 +145,11 @@ const elements = {
   approvalNeverInput: document.getElementById("approvalNeverInput"),
   hideFullAccessWarningInput: document.getElementById("hideFullAccessWarningInput"),
   searchInput: document.getElementById("searchInput"),
+  telegramEnabledInput: document.getElementById("telegramEnabledInput"),
+  telegramWebhookSecretInput: document.getElementById("telegramWebhookSecretInput"),
+  telegramBotTokenSecretKeyInput: document.getElementById("telegramBotTokenSecretKeyInput"),
+  telegramAllowedChatIdsInput: document.getElementById("telegramAllowedChatIdsInput"),
+  telegramWorkspaceInput: document.getElementById("telegramWorkspaceInput"),
   openPromptModal: document.getElementById("openPromptModal"),
   promptModal: document.getElementById("promptModal"),
   promptBackdrop: document.getElementById("promptBackdrop"),
@@ -592,7 +598,7 @@ async function refreshAppConfig() {
   if (!response.ok) {
     throw new Error("Impossible de charger la configuration application.");
   }
-  state.appConfig = await response.json();
+  state.appConfig = normalizeAppConfig(await response.json());
 }
 
 async function refreshSecrets() {
@@ -1502,6 +1508,12 @@ async function openConfigModal() {
   elements.approvalNeverInput.checked = Boolean(state.codexConfig.approvalNever);
   elements.hideFullAccessWarningInput.checked = Boolean(state.codexConfig.hideFullAccessWarning);
   elements.searchInput.checked = Boolean(state.codexConfig.search);
+  const telegram = normalizeTelegramConfig(state.appConfig.telegram);
+  elements.telegramEnabledInput.checked = Boolean(telegram.enabled);
+  elements.telegramWebhookSecretInput.value = telegram.webhookSecret;
+  elements.telegramBotTokenSecretKeyInput.value = telegram.botTokenSecretKey;
+  elements.telegramAllowedChatIdsInput.value = telegram.allowedChatIds;
+  elements.telegramWorkspaceInput.value = telegram.workspace;
   elements.configModal.classList.add("open");
   elements.configModal.setAttribute("aria-hidden", "false");
 }
@@ -2898,6 +2910,13 @@ async function onSaveConfig(event) {
   const theme = normalizeTheme(elements.themeValueInput.value || elements.themeSelect.value || state.settings.theme);
   const seconds = clampDuration(elements.notificationDurationInput.value);
   const workspaceRoot = String(elements.workspaceRootInput.value || "").trim() || "/projects";
+  const telegram = normalizeTelegramConfig({
+    enabled: elements.telegramEnabledInput.checked,
+    webhookSecret: elements.telegramWebhookSecretInput.value,
+    botTokenSecretKey: elements.telegramBotTokenSecretKeyInput.value,
+    allowedChatIds: elements.telegramAllowedChatIdsInput.value,
+    workspace: elements.telegramWorkspaceInput.value,
+  });
   const payload = {
     model: state.codexConfig.model,
     sandboxDangerFullAccess: elements.sandboxDangerInput.checked,
@@ -2909,7 +2928,7 @@ async function onSaveConfig(event) {
   const appResponse = await apiFetch("/api/config/app", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ workspaceRoot }),
+    body: JSON.stringify({ workspaceRoot, telegram }),
   });
 
   if (!appResponse.ok) {
@@ -2931,9 +2950,7 @@ async function onSaveConfig(event) {
   }
 
   const appConfigPayload = await appResponse.json();
-  state.appConfig = {
-    workspaceRoot: appConfigPayload.workspaceRoot || "/projects",
-  };
+  state.appConfig = normalizeAppConfig(appConfigPayload);
   state.codexConfig = await codexResponse.json();
 
   state.settings.theme = theme;
@@ -3035,6 +3052,43 @@ async function deleteSecret(key) {
 
 function defaultSettings() {
   return { theme: "sandstone", notificationDurationSeconds: 5, prompts: withDefaultQuickPrompts([]) };
+}
+
+function defaultTelegramConfig() {
+  return {
+    enabled: false,
+    webhookSecret: "",
+    botTokenSecretKey: "TELEGRAM_BOT_TOKEN",
+    allowedChatIds: "",
+    workspace: "telegram",
+  };
+}
+
+function normalizeAppConfig(payload = {}) {
+  return {
+    workspaceRoot: String(payload.workspaceRoot || "/projects"),
+    telegram: normalizeTelegramConfig(payload.telegram),
+  };
+}
+
+function normalizeTelegramConfig(payload = {}) {
+  const defaults = defaultTelegramConfig();
+  return {
+    enabled: Boolean(payload.enabled),
+    webhookSecret: String(payload.webhookSecret || "").trim(),
+    botTokenSecretKey: normalizeSecretKey(payload.botTokenSecretKey) || defaults.botTokenSecretKey,
+    allowedChatIds: String(payload.allowedChatIds || "").trim(),
+    workspace: slugifyFileName(payload.workspace || defaults.workspace) || defaults.workspace,
+  };
+}
+
+function normalizeSecretKey(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 function normalizeSettings(payload = {}) {
